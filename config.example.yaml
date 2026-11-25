@@ -1,0 +1,124 @@
+# Quillbox configuration example. Copy to config.yaml and edit.
+# Passwords are NOT stored here: register them in the OS credential store (see pop3_setup.py).
+# API keys: prefer the environment variable QUILLBOX_API_KEY over llm.api.api_key.
+
+app:
+  debug: false
+  title: Quillbox
+
+server:
+  host: 127.0.0.1        # keep loopback unless you put an authenticating proxy in front
+  port: 8765
+
+email:
+  default_days: 365      # initial sync window
+  incremental_days: 30
+  max_results: 100
+  outlook_enabled: false # experimental: Windows + desktop Outlook only
+  send_transport: smtp
+  sync_interval: 5       # minutes
+
+imap:
+  enabled: true
+  accounts:
+    alice@example.com:
+      host: mail.example.com
+      port: 993
+      ssl: true
+      verify_tls: true
+      username: alice@example.com
+      timeout: 60
+      initial_days: null
+      max_per_folder: 2000
+      skip_folders: [Drafts, Trash, Junk, 草稿, 草稿箱, 已删除邮件, 垃圾邮件]
+
+ews:
+  enabled: false
+  accounts:
+    alice@example.org:
+      host: mail.example.org
+      username: EXAMPLE\alice
+      verify_tls: true
+      timeout: 60
+      initial_days: null
+      max_per_folder: 2000
+
+pop3:
+  enabled: false
+  accounts: {}
+
+smtp:
+  enabled: true
+  host: smtp.example.com
+  port: 465
+  use_ssl: true
+  verify_tls: true
+  sender: ''
+  append_to_sent: true
+  accounts: {}           # per-account overrides: host / port / use_ssl / username
+
+llm:
+  provider: ollama       # ollama | api (any OpenAI-compatible endpoint)
+  api:
+    base_url: ''         # e.g. https://api.example.com/v1
+    model: ''
+    api_key: ''          # leave empty; use QUILLBOX_API_KEY
+    timeout: 120
+
+ollama:
+  base_url: http://localhost:11434
+  model: qwen2.5:7b
+
+vector_db:
+  path: data/chromadb
+  embedding_model_path: models/m3e-base
+  batch_size: 256
+
+ai:
+  skip_accounts: []
+  skip_folders: [Junk Email, 垃圾邮件]
+  skip_sender_patterns: [no-reply@, noreply@, mailer-daemon, postmaster@]
+
+# Order of accounts in the sidebar: full addresses or prefixes ending in "@"; "*" = all others.
+# account_order: [me@example.com, "*", "noc@"]
+
+mailbox_labels:
+  rules: []              # e.g. {name: Internal, color: blue, accounts: [], domains: [example.com]}
+
+prompts:
+  chat: ''
+  draft: ''
+  rule_gen: ''
+  summary: ''
+  todo_extract: ''
+  topic_digest: ''
+  topic_nl: ''
+  rules: []
+
+rules:
+  apply_on_server: false   # true: rule "move" actions also move the mail on the server (IMAP/EWS)
+
+scheduler:
+  enabled: false
+  cron: 0 8 * * *
+  interval_minutes: 5
+
+inbox_tabs: []
+saved_searches: []
+topic_rules: []
+user_folders:
+  __global__: []
+signature: ''
+
+embed:
+  allowed_origins: []    # origins allowed to embed the UI in an iframe
+
+# "About me" context for thread insight
+reader:
+  name: ''
+  role: ''
+  manager: {name: '', email: ''}
+  subordinates: []
+  peers: []
+  focus: []
+  internal_domains: []

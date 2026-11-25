@@ -1,0 +1,1029 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Quillbox</title>
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --nav-w:200px;--list-w:310px;
+  --nav-bg:#18181b;--surface:#fff;--bg:#f4f4f5;
+  --border:#e4e4e7;--text1:#09090b;--text2:#71717a;--text3:#a1a1aa;
+  --accent:#6366f1;--accent-l:#eef2ff;
+  --green:#22c55e;--yellow:#eab308;--red:#ef4444;
+}
+body{font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text1);height:100vh;overflow:hidden;font-size:13px}
+
+/* layout */
+.app{display:grid;grid-template-rows:44px 1fr;grid-template-columns:var(--nav-w) var(--list-w) 1fr;height:100vh}
+.app.nc{grid-template-columns:48px var(--list-w) 1fr}
+
+/* topbar */
+.topbar{grid-column:1/-1;background:var(--nav-bg);display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid #27272a}
+.logo{color:#fff;font-weight:600;font-size:14px;letter-spacing:-.3px;white-space:nowrap;padding-right:6px}
+.logo span{color:var(--accent)}
+.sw{flex:1;position:relative;max-width:500px}
+.sw input{width:100%;background:#27272a;border:1px solid #3f3f46;border-radius:8px;padding:6px 12px 6px 32px;color:#fff;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s}
+.sw input::placeholder{color:#52525b}
+.sw input:focus{border-color:var(--accent)}
+.si{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:#52525b;pointer-events:none}
+.ai-btn{display:flex;align-items:center;gap:7px;padding:6px 14px;background:linear-gradient(135deg,#6366f1,#8b5cf6);border:none;border-radius:8px;color:#fff;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500;transition:opacity .15s;white-space:nowrap;flex-shrink:0}
+.ai-btn:hover{opacity:.9}
+.ai-btn.on{box-shadow:0 0 0 2px #c4b5fd}
+.tr{display:flex;align-items:center;gap:8px;margin-left:auto}
+.sync-info{display:flex;align-items:center;gap:5px;color:#52525b;font-size:11px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.dot.s{background:var(--yellow);animation:pulse 1s infinite}
+.dot.e{background:var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.tbtn{background:transparent;border:1px solid #3f3f46;border-radius:6px;color:#a1a1aa;padding:4px 10px;cursor:pointer;font-size:12px;font-family:inherit;transition:all .15s}
+.tbtn:hover{background:#27272a;color:#fff}
+
+/* nav */
+.nav{background:var(--nav-bg);color:#a1a1aa;display:flex;flex-direction:column;overflow:hidden;border-right:1px solid #27272a}
+.nb{flex:1;overflow-y:auto;padding:8px 6px}
+.nb::-webkit-scrollbar{display:none}
+.ni{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;transition:all .1s;user-select:none;white-space:nowrap;overflow:hidden}
+.ni:hover{background:#27272a;color:#d4d4d8}
+.ni.on{background:#3f3f46;color:#fff;font-weight:500}
+.ni .ic{width:16px;text-align:center;flex-shrink:0}
+.badge{margin-left:auto;background:var(--accent);color:#fff;border-radius:10px;padding:1px 6px;font-size:10px;font-weight:600;flex-shrink:0}
+.badge.r{background:var(--red)}
+.ndiv{height:1px;background:#27272a;margin:5px 6px}
+.nlbl{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.8px;color:#3f3f46;padding:8px 8px 3px}
+.nf{border-top:1px solid #27272a}
+.ntgl{background:transparent;border:none;color:#52525b;padding:8px;cursor:pointer;width:100%;text-align:center;font-size:12px;transition:color .15s}
+.ntgl:hover{color:#a1a1aa}
+
+/* list */
+.elist{background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden}
+.lhd{padding:10px 14px 8px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px;flex-shrink:0}
+.ltitle{font-weight:600;font-size:14px;flex:1}
+.lcnt{color:var(--text3);font-size:12px}
+.fbar{display:flex;gap:4px;padding:6px 10px;border-bottom:1px solid var(--border);flex-shrink:0;overflow-x:auto}
+.fbar::-webkit-scrollbar{display:none}
+.ftag{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap;border:1px solid var(--border);background:transparent;color:var(--text2);transition:all .1s;font-family:inherit}
+.ftag:hover{border-color:var(--accent);color:var(--accent)}
+.ftag.on{background:var(--accent-l);color:var(--accent);border-color:var(--accent)}
+.rows{flex:1;overflow-y:auto}
+.rows::-webkit-scrollbar{width:3px}
+.rows::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+.erow{display:flex;align-items:center;padding:8px 12px;cursor:pointer;border-bottom:1px solid #f4f4f5;gap:7px;transition:background .1s}
+.erow:hover{background:#fafafa}
+.erow.sel{background:var(--accent-l)}
+.udot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.udot.r{background:transparent}
+.em{flex:1;min-width:0}
+.etop{display:flex;align-items:baseline;gap:4px;margin-bottom:2px}
+.esdr{font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
+.esdr.u{color:#000}
+.etime{font-size:11px;color:var(--text3);margin-left:auto;flex-shrink:0}
+.esubj{font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}
+.esubj.u{color:var(--text1);font-weight:500}
+.esnip{font-size:11px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.emeta{display:flex;gap:4px;align-items:center;margin-top:3px}
+.cp{font-size:10px;padding:1px 6px;border-radius:10px;font-weight:500}
+.cp-a{background:#fef2f2;color:#dc2626}
+.cp-n{background:#eff6ff;color:#2563eb}
+.cp-s{background:#f4f4f5;color:#52525b}
+.sbtn{background:none;border:none;cursor:pointer;color:#d4d4d8;font-size:14px;padding:2px;flex-shrink:0;transition:color .1s;line-height:1}
+.sbtn:hover,.sbtn.on{color:var(--yellow)}
+.pg{display:flex;align-items:center;justify-content:center;gap:8px;padding:8px;border-top:1px solid var(--border);flex-shrink:0}
+.pgbtn{background:transparent;border:1px solid var(--border);border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px;font-family:inherit;color:var(--text2);transition:all .15s}
+.pgbtn:hover{border-color:var(--accent);color:var(--accent)}
+.pgbtn:disabled{opacity:.4;cursor:not-allowed}
+.pglbl{font-size:12px;color:var(--text3)}
+
+/* detail */
+.detail{display:flex;flex-direction:column;overflow:hidden;background:var(--surface)}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);gap:12px}
+.empty-icon{font-size:44px;opacity:.25}
+.kbds{display:flex;gap:10px;font-size:11px;flex-wrap:wrap;justify-content:center}
+.kbd{display:inline-block;background:#e4e4e7;border-radius:3px;padding:1px 5px;font-size:10px;color:var(--text2);font-family:monospace}
+.dhead{padding:14px 20px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dsubj{font-size:17px;font-weight:600;line-height:1.4;margin-bottom:10px}
+.dmeta{display:flex;align-items:center;gap:10px}
+.av{width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0}
+.minfo{flex:1;min-width:0}
+.msdr{font-weight:500;font-size:13px}
+.meml{color:var(--text2);font-size:11px}
+.mtime{color:var(--text3);font-size:11px;white-space:nowrap}
+.dact{display:flex;gap:5px}
+.abtn{background:transparent;border:1px solid var(--border);border-radius:6px;padding:5px 10px;cursor:pointer;font-size:12px;font-family:inherit;color:var(--text2);transition:all .15s;display:flex;align-items:center;gap:4px}
+.abtn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-l)}
+.dtags{display:flex;gap:5px;align-items:center;padding:7px 20px;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.atpill{display:flex;align-items:center;gap:4px;background:#f4f4f5;border-radius:5px;padding:2px 7px;font-size:11px;color:var(--text2)}
+.dbw{flex:1;overflow-y:auto}
+.dbw::-webkit-scrollbar{width:3px}
+.dbw::-webkit-scrollbar-thumb{background:var(--border)}
+.dbody{padding:16px 20px;font-size:13.5px;line-height:1.85;color:#27272a;white-space:pre-wrap}
+
+/* ai panel */
+.aip{border-top:2px solid var(--accent);background:#fafaf9;flex-shrink:0;display:flex;flex-direction:column}
+.aiph{display:flex;align-items:center;gap:8px;padding:8px 14px 0}
+.aiplbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--accent);display:flex;align-items:center;gap:5px}
+.aist{font-size:11px;color:var(--text3);margin-left:auto}
+.aisum{padding:8px 14px 6px;border-bottom:1px solid #e7e5e4}
+.aitext{font-size:12.5px;color:var(--text2);line-height:1.65}
+.skel{height:11px;background:#e4e4e7;border-radius:3px;margin-bottom:5px;animation:shim 1.2s infinite}
+@keyframes shim{0%,100%{opacity:.4}50%{opacity:.9}}
+.aitodos{margin-top:6px;display:flex;flex-direction:column;gap:3px}
+.atodo{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)}
+.tdot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.aichat{padding:8px 14px 10px;display:flex;flex-direction:column;gap:7px}
+.cmsgs{max-height:130px;overflow-y:auto;display:flex;flex-direction:column;gap:5px}
+.cmsgs::-webkit-scrollbar{width:3px}
+.cmsgs::-webkit-scrollbar-thumb{background:var(--border)}
+.bbl{padding:6px 10px;border-radius:10px;font-size:12.5px;line-height:1.55;max-width:88%;word-break:break-word}
+.bu{background:var(--accent);color:#fff;align-self:flex-end;border-radius:10px 10px 2px 10px}
+.bai{background:#f0f0f2;color:var(--text1);align-self:flex-start;border-radius:10px 10px 10px 2px}
+.bai.st::after{content:'▋';color:var(--accent);animation:blink .6s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.crow{display:flex;gap:6px}
+.cin{flex:1;border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12.5px;font-family:inherit;outline:none;background:#fff;transition:border-color .15s}
+.cin:focus{border-color:var(--accent)}
+.cin::placeholder{color:var(--text3)}
+.csnd{background:var(--accent);border:none;border-radius:8px;color:#fff;padding:7px 14px;cursor:pointer;font-size:12px;font-family:inherit;font-weight:500}
+.csnd:hover{background:#4f46e5}
+.csnd:disabled{background:#c7d2fe;cursor:not-allowed}
+
+/* draft panel */
+.draft-panel{border-top:1px solid var(--border);padding:10px 14px;background:#fafaf9;flex-shrink:0}
+.draft-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.draft-lbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.6px;color:var(--text3)}
+.draft-ta{width:100%;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12.5px;font-family:inherit;resize:vertical;min-height:100px;outline:none;background:#fff}
+.draft-ta:focus{border-color:var(--accent)}
+.draft-actions{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
+
+/* drawer */
+.drawer{position:fixed;right:0;top:44px;bottom:0;width:380px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:100;transform:translateX(100%);transition:transform .25s ease;box-shadow:-4px 0 20px rgba(0,0,0,.08)}
+.drawer.on{transform:translateX(0)}
+.drhd{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0;background:linear-gradient(135deg,#eef2ff,#f5f3ff)}
+.drtitle{font-weight:600;font-size:14px;flex:1;color:var(--accent)}
+.drclose{background:none;border:none;cursor:pointer;color:var(--text3);font-size:18px;padding:2px 6px;border-radius:4px}
+.drclose:hover{background:var(--border);color:var(--text1)}
+.drhints{padding:10px 16px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--border);flex-shrink:0}
+.chip{padding:5px 10px;background:var(--accent-l);border:1px solid #c7d2fe;border-radius:20px;font-size:12px;color:var(--accent);cursor:pointer;transition:all .1s}
+.chip:hover{background:#e0e7ff}
+.drmsgs{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.drmsgs::-webkit-scrollbar{width:3px}
+.drmsgs::-webkit-scrollbar-thumb{background:var(--border)}
+.dbbl{padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.6;max-width:92%;word-break:break-word}
+.dbu{background:var(--accent);color:#fff;align-self:flex-end;border-radius:12px 12px 2px 12px}
+.dbai{background:#f4f4f5;color:var(--text1);align-self:flex-start;border-radius:12px 12px 12px 2px}
+.dbai.st::after{content:'▋';color:var(--accent);animation:blink .6s infinite}
+.drfoot{padding:10px 16px;border-top:1px solid var(--border);flex-shrink:0}
+.drrow{display:flex;gap:6px}
+.drin{flex:1;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s}
+.drin:focus{border-color:var(--accent)}
+.drin::placeholder{color:var(--text3)}
+.drsnd{background:var(--accent);border:none;border-radius:8px;color:#fff;padding:8px 16px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500}
+.drsnd:hover{background:#4f46e5}
+.drsnd:disabled{background:#c7d2fe;cursor:not-allowed}
+
+/* toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#18181b;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;z-index:999;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+
+/* modal overlay */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:flex;align-items:center;justify-content:center}
+.modal{background:#fff;border-radius:14px;width:600px;max-width:95vw;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.2)}
+.modal-hd{padding:16px 20px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0}
+.modal-title{font-weight:600;font-size:15px;flex:1}
+.modal-close{background:none;border:none;cursor:pointer;color:var(--text3);font-size:20px;padding:2px 6px;border-radius:4px;line-height:1}
+.modal-close:hover{background:var(--border);color:var(--text1)}
+.modal-body{padding:16px 20px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px}
+.modal-ft{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;flex-shrink:0}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px}
+.field input,.field textarea,.field select{border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s;background:#fff;color:var(--text1)}
+.field input:focus,.field textarea:focus{border-color:var(--accent)}
+.field textarea{resize:vertical;min-height:120px;line-height:1.6}
+.btn-primary{background:var(--accent);border:none;border-radius:8px;color:#fff;padding:8px 20px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500}
+.btn-primary:hover{background:#4f46e5}
+.btn-primary:disabled{background:#c7d2fe;cursor:not-allowed}
+.btn-ghost{background:transparent;border:1px solid var(--border);border-radius:8px;color:var(--text2);padding:8px 16px;cursor:pointer;font-size:13px;font-family:inherit}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;color:var(--red);padding:8px 16px;cursor:pointer;font-size:13px;font-family:inherit}
+.btn-danger:hover{background:#fee2e2}
+
+/* settings drawer */
+.sdrawer{position:fixed;right:0;top:44px;bottom:0;width:420px;background:#fff;border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:150;transform:translateX(100%);transition:transform .25s ease;box-shadow:-4px 0 20px rgba(0,0,0,.08)}
+.sdrawer.on{transform:translateX(0)}
+.sdhd{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.sdtitle{font-weight:600;font-size:15px;flex:1}
+.sdbody{flex:1;overflow-y:auto;padding:0}
+.sdgroup{padding:16px 20px;border-bottom:1px solid var(--border)}
+.sdglbl{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.7px;color:var(--text3);margin-bottom:10px}
+.sdrow{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.sdlbl{font-size:13px;color:var(--text2);width:100px;flex-shrink:0}
+.sdinp{flex:1;border:1px solid var(--border);border-radius:6px;padding:6px 9px;font-size:13px;font-family:inherit;outline:none}
+.sdinp:focus{border-color:var(--accent)}
+.sdft{padding:14px 20px;border-top:1px solid var(--border);flex-shrink:0;display:flex;gap:8px}
+.toggle{display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.toggle button{flex:1;border:none;padding:6px 14px;font-size:13px;font-family:inherit;cursor:pointer;background:#fff;color:var(--text2);transition:all .1s}
+.toggle button.on{background:var(--accent);color:#fff;font-weight:500}
+
+/* compose btn */
+.compose-btn{display:flex;align-items:center;gap:6px;background:var(--accent);border:none;border-radius:8px;color:#fff;padding:6px 14px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:500;flex-shrink:0}
+.compose-btn:hover{background:#4f46e5}
+</style>
+</head>
+<body x-data="app()" @keydown.window="handleKey($event)" x-init="init()">
+
+<div class="app" :class="{nc: navCol}">
+
+  <!-- TOPBAR -->
+  <header class="topbar">
+    <div class="logo">Quillbox<span>Mail</span></div>
+    <div class="sw">
+      <span class="si">🔍</span>
+      <input type="text" x-ref="search" x-model="searchQ"
+        placeholder="搜索邮件、联系人… 按 / 聚焦"
+        @input.debounce.300ms="doSearch()"
+        @keydown.escape="clearSearch()">
+    </div>
+    <button class="compose-btn" @click="openCompose()">✏️ 写邮件</button>
+    <button class="ai-btn" :class="{on: drawerOpen}" @click="drawerOpen=!drawerOpen;settingsOpen=false">
+      ✨ AI 助手
+      <span style="font-size:11px;opacity:.7;font-weight:400" x-show="!drawerOpen">跨邮件查询</span>
+    </button>
+    <div class="tr">
+      <div class="sync-info">
+        <div class="dot" :class="{s: stats.sync_running, e: !stats.ollama_ok && !stats.sync_running}"></div>
+        <span x-text="stats.sync_running ? (stats.sync_progress.slice(0,30)||'同步中…') : (stats.last_sync ? '已同步' : '未同步')"></span>
+        <span style="background:#3f3f46;color:#a1a1aa;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:4px"
+              x-text="stats.ai_provider==='api' ? '内网API' : 'Ollama'" x-show="stats.ai_provider"></span>
+      </div>
+      <button class="tbtn" @click="triggerSync()" :disabled="stats.sync_running">⟳ 同步</button>
+      <button class="tbtn" @click="settingsOpen=!settingsOpen;drawerOpen=false" :class="{on:settingsOpen}">⚙️</button>
+    </div>
+  </header>
+
+  <!-- NAV -->
+  <nav class="nav">
+    <div class="nb">
+      <template x-if="!navCol">
+        <div>
+          <div class="ni" :class="{on:view==='inbox'}" @click="setView('inbox')">
+            <span class="ic">📥</span> 收件箱
+            <span class="badge" x-show="stats.unread>0" x-text="stats.unread"></span>
+          </div>
+          <div class="ni" :class="{on:view==='starred'}" @click="setView('starred')">
+            <span class="ic">⭐</span> 星标
+          </div>
+          <div class="ni" :class="{on:view==='unread'}" @click="setView('unread')">
+            <span class="ic">🔵</span> 未读
+            <span class="badge" x-show="stats.unread>0" x-text="stats.unread"></span>
+          </div>
+          <div class="ni" :class="{on:view==='all'}" @click="setView('all')">
+            <span class="ic">📋</span> 全部邮件
+          </div>
+          <div class="ndiv"></div>
+          <div class="nlbl">账户</div>
+          <template x-for="acc in accounts" :key="acc.name">
+            <div>
+              <div class="ni" @click="acc.open=!acc.open" style="color:#52525b;font-size:12px">
+                <span class="ic" x-text="acc.open?'▾':'▸'"></span>
+                <span x-text="acc.name.split('@')[0]" style="overflow:hidden;text-overflow:ellipsis"></span>
+              </div>
+              <div x-show="acc.open" style="padding-left:8px">
+                <template x-for="f in acc.folders" :key="f">
+                  <div class="ni" style="font-size:12px;padding:4px 8px"
+                    :class="{on: curAcc===acc.name && curFolder===f}"
+                    @click="setFolder(acc.name,f)">
+                    <span class="ic" style="font-size:11px">📁</span>
+                    <span x-text="f" style="overflow:hidden;text-overflow:ellipsis"></span>
+                    <span class="badge" style="background:#52525b;font-size:9px"
+                      x-show="(acc.unread||{})[f]>0" x-text="(acc.unread||{})[f]"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
+          <div class="ndiv"></div>
+          <div class="ni" :class="{on:view==='todo'}" @click="setView('todo')">
+            <span class="ic">✅</span> 待办
+            <span class="badge r" x-show="todoCnt>0" x-text="todoCnt"></span>
+          </div>
+        </div>
+      </template>
+      <template x-if="navCol">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding-top:4px">
+          <div class="ni" style="justify-content:center;padding:8px 4px" :class="{on:view==='inbox'}" @click="setView('inbox')" title="收件箱">📥</div>
+          <div class="ni" style="justify-content:center;padding:8px 4px" :class="{on:view==='starred'}" @click="setView('starred')" title="星标">⭐</div>
+          <div class="ni" style="justify-content:center;padding:8px 4px" :class="{on:view==='unread'}" @click="setView('unread')" title="未读">🔵</div>
+          <div class="ni" style="justify-content:center;padding:8px 4px" :class="{on:view==='todo'}" @click="setView('todo')" title="待办">✅</div>
+        </div>
+      </template>
+    </div>
+    <div class="nf">
+      <button class="ntgl" @click="navCol=!navCol">
+        <span x-text="navCol?'▶':'◀'"></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- EMAIL LIST -->
+  <div class="elist">
+    <div class="lhd">
+      <span class="ltitle" x-text="viewTitle()"></span>
+      <span class="lcnt" x-text="listTotal+'封'"></span>
+    </div>
+    <div class="fbar">
+      <button class="ftag" :class="{on:filter==='all'}"    @click="setFilter('all')">全部</button>
+      <button class="ftag" :class="{on:filter==='action'}" @click="setFilter('action')">🚨 重要</button>
+      <button class="ftag" :class="{on:filter==='notify'}" @click="setFilter('notify')">📢 通知</button>
+      <button class="ftag" :class="{on:filter==='attach'}" @click="setFilter('attach')">📎 附件</button>
+    </div>
+    <div class="rows" x-ref="listBox">
+      <div x-show="listLoading" style="padding:30px;text-align:center;color:var(--text3)">加载中…</div>
+      <div x-show="!listLoading && emails.length===0" style="padding:40px 20px;text-align:center;color:var(--text3)">暂无邮件</div>
+      <template x-for="em in emails" :key="em.id">
+        <div class="erow" :class="{sel:selId===em.id}" @click="selectEmail(em)">
+          <div class="udot" :class="{r:!em.unread}"></div>
+          <div class="em">
+            <div class="etop">
+              <span class="esdr" :class="{u:em.unread}" x-text="em.sender||em.sender_email||'未知'"></span>
+              <span class="etime" x-text="fmtTime(em.time)"></span>
+            </div>
+            <div class="esubj" :class="{u:em.unread}" x-text="em.subject||'(无主题)'"></div>
+            <div class="esnip" x-text="(em.summary||em.body||'').slice(0,60)"></div>
+            <div class="emeta" x-show="em.category||em.has_attachment">
+              <span x-show="em.category&&em.category.includes('重要')" class="cp cp-a">🚨 重要行动</span>
+              <span x-show="em.category&&em.category.includes('通知')" class="cp cp-n">📢 通知</span>
+              <span x-show="em.category&&em.category.includes('订阅')" class="cp cp-s">📰 订阅</span>
+              <span x-show="em.has_attachment" style="color:var(--text3);font-size:11px">📎</span>
+            </div>
+          </div>
+          <button class="sbtn" :class="{on:em.starred}" @click.stop="toggleStar(em)">
+            <span x-text="em.starred?'⭐':'☆'"></span>
+          </button>
+        </div>
+      </template>
+    </div>
+    <div class="pg" x-show="!searchQ && (page>0 || hasMore)">
+      <button class="pgbtn" :disabled="page===0" @click="changePage(-1)">← 上页</button>
+      <span class="pglbl" x-text="'第 '+(page+1)+' 页'"></span>
+      <button class="pgbtn" :disabled="!hasMore" @click="changePage(1)">下页 →</button>
+    </div>
+  </div>
+
+  <!-- DETAIL -->
+  <div class="detail">
+    <div class="empty" x-show="!selEmail">
+      <div class="empty-icon">✉️</div>
+      <div style="color:var(--text3)">选择一封邮件查看详情</div>
+      <div class="kbds">
+        <span><span class="kbd">j</span><span class="kbd">k</span> 翻邮件</span>
+        <span><span class="kbd">/</span> 搜索</span>
+        <span><span class="kbd">s</span> 星标</span>
+        <span><span class="kbd">r</span> 起草回复</span>
+      </div>
+      <div style="margin-top:16px;color:var(--text3);font-size:12px;text-align:center;line-height:1.7">
+        点击顶栏 <strong style="color:var(--accent)">✨ AI 助手</strong> 可跨邮件查询<br>
+        <span style="font-size:11px">"找上周审批邮件"、"帮我生成工作报告"</span>
+      </div>
+    </div>
+
+    <template x-if="selEmail">
+      <div style="display:flex;flex-direction:column;height:100%;overflow:hidden">
+
+        <div class="dhead">
+          <div class="dsubj" x-text="selEmail.subject||'(无主题)'"></div>
+          <div class="dmeta">
+            <div class="av" x-text="(selEmail.sender||'?')[0]"></div>
+            <div class="minfo">
+              <div class="msdr" x-text="selEmail.sender||selEmail.sender_email"></div>
+              <div class="meml" x-text="selEmail.sender_email"></div>
+            </div>
+            <div class="mtime" x-text="selEmail.time?.replace('T',' ').slice(0,16)"></div>
+            <div class="dact">
+              <button class="abtn" @click="toggleStar(selEmail)">
+                <span x-text="selEmail.starred?'⭐':'☆'"></span>
+                <span x-text="selEmail.starred?'取消星标':'星标'"></span>
+              </button>
+              <button class="abtn" @click="openReply()">↩️ 回复</button>
+              <button class="abtn" @click="openForward()">↪️ 转发</button>
+              <button class="abtn" @click="startDraft()">✍️ AI起草</button>
+              <button class="abtn" @click="extractTodo()">📋 待办</button>
+              <button class="abtn" style="color:var(--red);border-color:#fca5a5" @click="confirmDelete()">🗑️ 删除</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="dtags" x-show="selEmail.attachments?.length||selEmail.category">
+          <template x-for="a in (selEmail.attachments||[])">
+            <div class="atpill">📎 <span x-text="a"></span></div>
+          </template>
+          <span x-show="selEmail.category?.includes('重要')" class="cp cp-a">🚨 重要行动</span>
+          <span x-show="selEmail.category?.includes('通知')" class="cp cp-n">📢 通知</span>
+        </div>
+
+        <!-- AI 面板（正文上方） -->
+        <div class="aip">
+          <div class="aiph" style="cursor:pointer" @click="aiExpanded=!aiExpanded">
+            <div class="aiplbl">
+              ✨ AI 摘要
+              <span style="font-size:10px;font-weight:400;color:var(--text3)" x-show="aiLoading">分析中…</span>
+            </div>
+            <span class="aist" x-show="aiSummary&&!aiLoading">✓ 已分析</span>
+            <span style="color:var(--text3);font-size:11px;margin-left:6px" x-text="aiExpanded?'▲ 收起':'▼ 展开'"></span>
+          </div>
+          <div x-show="aiExpanded">
+            <div class="aisum">
+              <template x-if="aiLoading&&!aiSummary">
+                <div>
+                  <div class="skel" style="width:92%"></div>
+                  <div class="skel" style="width:75%"></div>
+                  <div class="skel" style="width:83%"></div>
+                </div>
+              </template>
+              <div class="aitext" x-show="aiSummary" x-text="aiSummary"></div>
+              <div class="aitodos" x-show="aiTodos.length">
+                <template x-for="t in aiTodos">
+                  <div class="atodo"><div class="tdot"></div><span x-text="t"></span></div>
+                </template>
+              </div>
+            </div>
+            <div class="aichat">
+              <div class="cmsgs" x-ref="chatBox">
+                <template x-for="m in chatHist" :key="m.id">
+                  <div class="bbl" :class="m.role==='user'?'bu':'bai '+(m.streaming?'st':'')" x-text="m.content"></div>
+                </template>
+              </div>
+              <div class="crow">
+                <input class="cin" type="text" x-model="chatIn" x-ref="chatEl"
+                  placeholder="问这封邮件… 或"帮我起草回复""
+                  @keydown.enter="sendChat()">
+                <button class="csnd" @click="sendChat()" :disabled="chatBusy||!chatIn.trim()">发送</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 正文 -->
+        <div class="dbw">
+          <div class="dbody" x-text="selEmail.body"></div>
+        </div>
+
+        <!-- 起草回复面板 -->
+        <div class="draft-panel" x-show="showDraft">
+          <div class="draft-head">
+            <span class="draft-lbl">✍️ 起草回复</span>
+            <select x-model="draftTone" style="font-size:12px;border:1px solid var(--border);border-radius:5px;padding:2px 6px;font-family:inherit;outline:none;cursor:pointer">
+              <option>正式</option><option>简洁</option><option>友好</option><option>感谢</option>
+            </select>
+            <button class="abtn" @click="genDraft()" :disabled="draftLoading" style="margin-left:auto">
+              <span x-text="draftLoading?'生成中…':'🤖 AI起草'"></span>
+            </button>
+            <button class="abtn" @click="showDraft=false;draftText=''">关闭</button>
+          </div>
+          <textarea class="draft-ta" x-model="draftText" :placeholder="draftLoading?'AI 正在起草…':'在此编辑草稿，或点击 AI起草 自动生成'"></textarea>
+          <div class="draft-actions">
+            <button class="abtn" @click="copyDraft()">📋 复制</button>
+          </div>
+        </div>
+
+      </div>
+    </template>
+  </div>
+</div>
+
+<!-- 全局 AI 抽屉 -->
+<div class="drawer" :class="{on:drawerOpen}">
+  <div class="drhd">
+    <div style="font-size:20px">✨</div>
+    <div class="drtitle">AI 邮件助手</div>
+    <button class="drclose" @click="drawerOpen=false">×</button>
+  </div>
+  <div class="drhints">
+    <div class="chip" @click="askGlobal('有哪些未处理的审批邮件？')">未处理审批</div>
+    <div class="chip" @click="askGlobal('帮我汇总本周所有待办事项')">本周待办</div>
+    <div class="chip" @click="askGlobal('帮我生成上个月的工作报告')">生成工作报告</div>
+    <div class="chip" @click="askGlobal('找最近含附件的重要邮件')">重要附件</div>
+  </div>
+  <div class="drmsgs" x-ref="drawerBox">
+    <template x-if="drawerHist.length===0">
+      <div style="color:var(--text3);font-size:13px;text-align:center;padding-top:30px;line-height:1.8">
+        可以问我任何关于邮件的问题<br>
+        <span style="font-size:12px">搜索、汇总、分析、生成报告都可以</span>
+      </div>
+    </template>
+    <template x-for="m in drawerHist" :key="m.id">
+      <div class="dbbl" :class="m.role==='user'?'dbu':'dbai '+(m.streaming?'st':'')" x-text="m.content"></div>
+    </template>
+  </div>
+  <div class="drfoot">
+    <div class="drrow">
+      <input class="drin" type="text" x-model="drawerIn" x-ref="drawerEl"
+        placeholder="问任何关于邮件的问题…"
+        @keydown.enter="sendDrawer()">
+      <button class="drsnd" @click="sendDrawer()" :disabled="drawerBusy||!drawerIn.trim()">发送</button>
+    </div>
+  </div>
+</div>
+
+<!-- 写邮件 / 回复 / 转发 modal -->
+<div class="modal-bg" x-show="composeOpen" x-cloak @click.self="composeOpen=false">
+  <div class="modal" @click.stop>
+    <div class="modal-hd">
+      <span class="modal-title" x-text="composeMode==='reply'?'回复邮件':composeMode==='forward'?'转发邮件':'写新邮件'"></span>
+      <button class="modal-close" @click="composeOpen=false">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label>收件人</label>
+        <input type="text" x-model="composeTo" placeholder="收件人邮箱，多个用英文逗号分隔">
+      </div>
+      <div class="field" x-show="composeMode!=='reply'">
+        <label>抄送</label>
+        <input type="text" x-model="composeCc" placeholder="抄送（可选）">
+      </div>
+      <div class="field">
+        <label>主题</label>
+        <input type="text" x-model="composeSubject">
+      </div>
+      <div class="field">
+        <label>正文</label>
+        <textarea x-model="composeBody" style="min-height:200px"></textarea>
+      </div>
+      <div x-show="composeMode==='reply'||composeMode==='forward'" style="border-top:1px solid var(--border);padding-top:10px">
+        <div style="font-size:11px;color:var(--text3);margin-bottom:6px">原邮件</div>
+        <div style="font-size:12px;color:var(--text2);max-height:120px;overflow-y:auto;padding:8px;background:#f9f9f9;border-radius:6px;line-height:1.6" x-text="selEmail?.body?.slice(0,600)"></div>
+      </div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn-ghost" @click="composeOpen=false">取消</button>
+      <button class="btn-ghost" @click="aiDraftCompose()" :disabled="composeSending">🤖 AI起草</button>
+      <button class="btn-primary" @click="sendCompose()" :disabled="composeSending||!composeTo.trim()||!composeSubject.trim()">
+        <span x-text="composeSending?'发送中…':'📤 发送'"></span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- 删除确认 modal -->
+<div class="modal-bg" x-show="deleteConfirm" x-cloak @click.self="deleteConfirm=false">
+  <div class="modal" style="width:380px" @click.stop>
+    <div class="modal-hd"><span class="modal-title">确认删除</span><button class="modal-close" @click="deleteConfirm=false">×</button></div>
+    <div class="modal-body" style="gap:8px">
+      <div style="color:var(--text2)">确定要删除这封邮件吗？</div>
+      <div style="font-weight:500" x-text="selEmail?.subject"></div>
+    </div>
+    <div class="modal-ft">
+      <button class="btn-ghost" @click="deleteConfirm=false">取消</button>
+      <button class="btn-danger" @click="doDelete(false)">移入废纸篓</button>
+    </div>
+  </div>
+</div>
+
+<!-- 设置抽屉 -->
+<div class="sdrawer" :class="{on:settingsOpen}">
+  <div class="sdhd">
+    <span style="font-size:18px">⚙️</span>
+    <span class="sdtitle">系统设置</span>
+    <button class="modal-close" @click="settingsOpen=false">×</button>
+  </div>
+  <div class="sdbody">
+
+    <div class="sdgroup">
+      <div class="sdglbl">大模型配置</div>
+      <div class="sdrow">
+        <span class="sdlbl">推理后端</span>
+        <div class="toggle">
+          <button :class="{on:settings.llm_provider==='ollama'}" @click="settings.llm_provider='ollama'">本地 Ollama</button>
+          <button :class="{on:settings.llm_provider==='api'}" @click="settings.llm_provider='api'">内网 API</button>
+        </div>
+      </div>
+
+      <div x-show="settings.llm_provider==='ollama'">
+        <div class="sdrow">
+          <span class="sdlbl">服务地址</span>
+          <input class="sdinp" type="text" x-model="settings.ollama_url" placeholder="http://127.0.0.1:11434">
+        </div>
+        <div class="sdrow">
+          <span class="sdlbl">模型名称</span>
+          <input class="sdinp" type="text" x-model="settings.ollama_model" placeholder="qwen2.5:7b">
+        </div>
+      </div>
+
+      <div x-show="settings.llm_provider==='api'">
+        <div class="sdrow">
+          <span class="sdlbl">API 地址</span>
+          <input class="sdinp" type="text" x-model="settings.api_base_url" placeholder="http://内网地址/v1">
+        </div>
+        <div class="sdrow">
+          <span class="sdlbl">API Key</span>
+          <input class="sdinp" type="password" x-model="settings.api_key" placeholder="无认证可留空">
+        </div>
+        <div class="sdrow">
+          <span class="sdlbl">模型名称</span>
+          <input class="sdinp" type="text" x-model="settings.api_model" placeholder="模型名称">
+        </div>
+        <div class="sdrow">
+          <span class="sdlbl">超时(秒)</span>
+          <input class="sdinp" type="number" x-model="settings.api_timeout" style="width:80px">
+        </div>
+      </div>
+
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button class="btn-ghost" style="font-size:12px;padding:5px 12px" @click="testAI()">🔌 测试连接</button>
+        <span style="font-size:12px" :style="aiTestResult.ok?'color:var(--green)':'color:var(--red)'" x-text="aiTestResult.msg"></span>
+      </div>
+    </div>
+
+    <div class="sdgroup">
+      <div class="sdglbl">同步设置</div>
+      <div class="sdrow">
+        <span class="sdlbl">增量天数</span>
+        <input class="sdinp" type="number" x-model="settings.sync_days" style="width:80px">
+        <span style="font-size:12px;color:var(--text3)">天内的新邮件</span>
+      </div>
+      <div class="sdrow">
+        <span class="sdlbl">同步间隔</span>
+        <input class="sdinp" type="number" x-model="settings.sync_interval" style="width:80px" min="0">
+        <span style="font-size:12px;color:var(--text3)">分钟，0 = 禁用自动同步</span>
+      </div>
+    </div>
+
+    <div class="sdgroup">
+      <div class="sdglbl">当前状态</div>
+      <div style="display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--text2)">
+        <div>邮件总量：<strong x-text="stats.total"></strong> 封</div>
+        <div>未读：<strong x-text="stats.unread"></strong> 封</div>
+        <div>待 AI 分析：<strong x-text="stats.pending_ai"></strong> 封</div>
+        <div>AI 后端：<strong x-text="stats.ai_provider==='api'?'内网 API':'本地 Ollama'"></strong>
+          <span :style="stats.ollama_ok?'color:var(--green)':'color:var(--red)'" x-text="stats.ollama_ok?' ✓ 在线':' ✗ 离线'"></span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+  <div class="sdft">
+    <button class="btn-ghost" @click="settingsOpen=false">取消</button>
+    <button class="btn-primary" @click="saveSettings()" :disabled="settingsSaving">
+      <span x-text="settingsSaving?'保存中…':'保存设置'"></span>
+    </button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" :class="{show:toastMsg}" x-text="toastMsg"></div>
+
+<script>
+function app() {
+  return {
+    // 状态
+    navCol: false, view: 'inbox', filter: 'all', searchQ: '',
+    selId: null, selEmail: null,
+    emails: [], listTotal: 0, hasMore: false, page: 0, listLoading: false,
+    accounts: [], stats: {unread:0, sync_running:false, ollama_ok:true, last_sync:'', sync_progress:'', pending_ai:0},
+    todoCnt: 0, curAcc: null, curFolder: null,
+    // 邮件 AI
+    aiSummary: '', aiTodos: [], aiLoading: false, aiExpanded: true,
+    chatHist: [], chatIn: '', chatBusy: false,
+    // 起草
+    showDraft: false, draftText: '', draftTone: '正式', draftLoading: false,
+    // 全局抽屉
+    drawerOpen: false, drawerHist: [], drawerIn: '', drawerBusy: false,
+    // 设置
+    settingsOpen: false, settings: {}, settingsSaving: false, aiTestResult: {ok:null,msg:''},
+    // 写信
+    composeOpen: false, composeMode: 'new',
+    composeTo: '', composeCc: '', composeSubject: '', composeBody: '', composeSending: false,
+    // 删除确认
+    deleteConfirm: false,
+    // toast
+    toastMsg: '', _toastTimer: null,
+
+    async init() {
+      await Promise.all([this.loadAccounts(), this.refreshStats(), this.loadEmails(), this.loadSettings()]);
+      setInterval(() => this.refreshStats(), 4000);
+      // 打开前端时触发一次同步（server 启动时已自动同步，这里做前端主动刷新）
+      setTimeout(() => fetch('/api/sync', {method:'POST'}), 2000);
+    },
+
+    async loadAccounts() {
+      const r = await fetch('/api/accounts');
+      this.accounts = await r.json();
+      this.accounts.forEach(a => a.open = false);
+    },
+
+    async refreshStats() {
+      const r = await fetch('/api/stats');
+      this.stats = await r.json();
+    },
+
+    async loadEmails() {
+      this.listLoading = true;
+      try {
+        const params = new URLSearchParams({
+          view: this.view, filter: this.filter, page: this.page, page_size: 30,
+        });
+        if (this.curAcc)    params.set('account', this.curAcc);
+        if (this.curFolder) params.set('folder',  this.curFolder);
+        if (this.searchQ)   params.set('q', this.searchQ);
+        const r    = await fetch('/api/emails?' + params);
+        const data = await r.json();
+        this.emails    = data.emails || [];
+        this.listTotal = data.total  || 0;
+        this.hasMore   = data.has_more || false;
+      } finally {
+        this.listLoading = false;
+      }
+    },
+
+    // ── 导航 ─────────────────────────────────────────────────────────
+    setView(v) {
+      this.view=v; this.curAcc=null; this.curFolder=null; this.filter='all'; this.page=0;
+      this.selId=null; this.selEmail=null;
+      this.loadEmails();
+    },
+    setFolder(acc, f) {
+      this.view='folder'; this.curAcc=acc; this.curFolder=f; this.filter='all'; this.page=0;
+      this.selId=null; this.selEmail=null;
+      this.loadEmails();
+    },
+    setFilter(f) { this.filter=f; this.page=0; this.loadEmails(); },
+    changePage(d) { this.page=Math.max(0,this.page+d); this.loadEmails(); },
+
+    viewTitle() {
+      const m={inbox:'收件箱',starred:'星标',unread:'未读',all:'全部邮件',todo:'待办',folder:this.curFolder||'文件夹'};
+      return m[this.view]||'邮件';
+    },
+
+    fmtTime(t) {
+      if (!t) return '';
+      try {
+        const dt = new Date(t);
+        const now = new Date();
+        if (dt.toDateString()===now.toDateString()) return dt.toTimeString().slice(0,5);
+        if (dt.getFullYear()===now.getFullYear()) return `${dt.getMonth()+1}-${String(dt.getDate()).padStart(2,'0')}`;
+        return t.slice(0,10);
+      } catch { return t.slice(0,10); }
+    },
+
+    // ── 邮件操作 ─────────────────────────────────────────────────────
+    async selectEmail(em) {
+      this.selId=em.id; this.selEmail=em; em.unread=false;
+      this.aiSummary=''; this.aiTodos=[]; this.aiExpanded=true; this.chatHist=[]; this.chatIn='';
+      this.showDraft=false; this.draftText='';
+      // 标已读
+      fetch(`/api/emails/${em.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({unread:false})});
+      // 自动 AI 摘要
+      this.$nextTick(()=>this.autoSummarize(em.id));
+    },
+
+    autoSummarize(emailId) {
+      this.aiLoading=true; this.aiSummary=''; this.aiTodos=[];
+      const es = new EventSource(`/api/stream/summary/${emailId}`);
+      es.onmessage = (e) => {
+        const d = JSON.parse(e.data);
+        if (d.text)  this.aiSummary += d.text;
+        if (d.todos) this.aiTodos = d.todos;
+        if (d.done)  { es.close(); this.aiLoading=false; }
+        if (d.error) { es.close(); this.aiLoading=false; }
+      };
+      es.onerror = () => { es.close(); this.aiLoading=false; };
+    },
+
+    async toggleStar(em) {
+      em.starred = !em.starred;
+      fetch(`/api/emails/${em.id}`, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({starred:em.starred})});
+    },
+
+    async extractTodo() {
+      if (!this.selEmail) return;
+      const todos = this.aiTodos.length ? this.aiTodos : [];
+      if (!todos.length) { this.toast('暂无 AI 识别的待办，请先等待分析完成'); return; }
+      await Promise.all(todos.map(t =>
+        fetch('/api/todos', {method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({content:t, source_email_id:this.selEmail.id, priority:'normal'})})
+      ));
+      this.todoCnt += todos.length;
+      this.toast(`✅ 已添加 ${todos.length} 条待办`);
+    },
+
+    // ── 搜索 ─────────────────────────────────────────────────────────
+    doSearch() { this.page=0; this.selId=null; this.selEmail=null; this.loadEmails(); },
+    clearSearch() { this.searchQ=''; this.$refs.search.blur(); this.page=0; this.loadEmails(); },
+
+    // ── 同步 ─────────────────────────────────────────────────────────
+    async triggerSync() {
+      await fetch('/api/sync', {method:'POST'});
+      this.toast('⟳ 同步已启动');
+    },
+
+    // ── 起草回复 ─────────────────────────────────────────────────────
+    startDraft() { this.showDraft=true; this.$nextTick(()=>this.genDraft()); },
+
+    async genDraft() {
+      if (!this.selEmail||this.draftLoading) return;
+      this.draftLoading=true; this.draftText='';
+      const res = await fetch('/api/stream/draft', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({email_id:this.selEmail.id, tone:this.draftTone})});
+      await this._readSSE(res, (d)=>{ if(d.text) this.draftText+=d.text; },
+                               ()=>{ this.draftLoading=false; });
+    },
+
+    copyDraft() {
+      navigator.clipboard.writeText(this.draftText);
+      this.toast('📋 已复制到剪贴板');
+    },
+
+    // ── AI 聊天 ──────────────────────────────────────────────────────
+    async sendChat() {
+      const msg=this.chatIn.trim(); if(!msg||this.chatBusy) return;
+      this.chatIn='';
+      this.chatHist.push({id:Date.now(),role:'user',content:msg});
+      this.chatBusy=true;
+      const m={id:Date.now()+1,role:'ai',content:'',streaming:true};
+      this.chatHist.push(m);
+      const res = await fetch('/api/stream/chat', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:msg, email_id:this.selEmail?.id})});
+      await this._readSSE(res,
+        (d)=>{ if(d.text){m.content+=d.text; this.$nextTick(()=>{const b=this.$refs.chatBox;if(b)b.scrollTop=b.scrollHeight;}); }},
+        ()=>{ m.streaming=false; this.chatBusy=false; });
+    },
+
+    // ── 全局 AI 抽屉 ─────────────────────────────────────────────────
+    askGlobal(q) { this.drawerIn=q; this.$nextTick(()=>this.sendDrawer()); },
+
+    async sendDrawer() {
+      const msg=this.drawerIn.trim(); if(!msg||this.drawerBusy) return;
+      this.drawerIn='';
+      this.drawerHist.push({id:Date.now(),role:'user',content:msg});
+      this.drawerBusy=true;
+      const m={id:Date.now()+1,role:'ai',content:'',streaming:true};
+      this.drawerHist.push(m);
+      const res = await fetch('/api/stream/global-chat', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({message:msg})});
+      await this._readSSE(res,
+        (d)=>{ if(d.text){m.content+=d.text; this.$nextTick(()=>{const b=this.$refs.drawerBox;if(b)b.scrollTop=b.scrollHeight;}); }},
+        ()=>{ m.streaming=false; this.drawerBusy=false; });
+    },
+
+    // ── SSE 读取工具 ─────────────────────────────────────────────────
+    async _readSSE(response, onChunk, onDone) {
+      const reader  = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, {stream:true});
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const d = JSON.parse(line.slice(6));
+              onChunk(d);
+              if (d.done||d.error) { onDone(); return; }
+            } catch {}
+          }
+        }
+      }
+      onDone();
+    },
+
+    // ── 键盘快捷键 ───────────────────────────────────────────────────
+    handleKey(e) {
+      if (e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA') return;
+      const idx = this.emails.findIndex(x=>x.id===this.selId);
+      if (e.key==='j'||e.key==='ArrowDown') {
+        e.preventDefault();
+        const n=this.emails[Math.min(idx+1,this.emails.length-1)];
+        if(n)this.selectEmail(n);
+      } else if (e.key==='k'||e.key==='ArrowUp') {
+        e.preventDefault();
+        const p=this.emails[Math.max(idx-1,0)];
+        if(p)this.selectEmail(p);
+      } else if (e.key==='/') {
+        e.preventDefault(); this.$refs.search.focus();
+      } else if (e.key==='s'&&this.selEmail) {
+        this.toggleStar(this.selEmail);
+      } else if (e.key==='r'&&this.selEmail) {
+        this.startDraft();
+      } else if (e.key==='Escape') {
+        this.clearSearch(); this.drawerOpen=false;
+      }
+    },
+
+    // ── 设置 ─────────────────────────────────────────────────────────
+    async loadSettings() {
+      const r = await fetch('/api/settings');
+      this.settings = await r.json();
+    },
+    async saveSettings() {
+      this.settingsSaving = true;
+      try {
+        const r = await fetch('/api/settings', {method:'POST',
+          headers:{'Content-Type':'application/json'}, body:JSON.stringify(this.settings)});
+        const d = await r.json();
+        if (d.ok) { this.toast('✅ 设置已保存，AI 后端已切换至 ' + (d.provider==='api'?'内网 API':'Ollama')); }
+        else { this.toast('❌ 保存失败'); }
+      } finally { this.settingsSaving = false; }
+    },
+    async testAI() {
+      this.aiTestResult = {ok:null, msg:'测试中…'};
+      const r = await fetch('/api/settings/test-ai', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(this.settings)
+      });
+      const d = await r.json();
+      this.aiTestResult = {ok: d.ok, msg: d.ok ? `✓ ${d.label} 在线` : `✗ ${d.label} 无法连接`};
+    },
+
+    // ── 写信 / 回复 / 转发 ───────────────────────────────────────────
+    openCompose() {
+      this.composeMode='new'; this.composeTo=''; this.composeCc='';
+      this.composeSubject=''; this.composeBody=''; this.composeOpen=true;
+    },
+    openReply() {
+      if (!this.selEmail) return;
+      this.composeMode='reply';
+      this.composeTo = this.selEmail.sender_email||'';
+      this.composeCc = '';
+      this.composeSubject = (this.selEmail.subject||'').startsWith('Re:')
+        ? this.selEmail.subject : 'Re: '+(this.selEmail.subject||'');
+      this.composeBody = '';
+      this.composeOpen = true;
+    },
+    openForward() {
+      if (!this.selEmail) return;
+      this.composeMode='forward';
+      this.composeTo=''; this.composeCc='';
+      this.composeSubject = (this.selEmail.subject||'').startsWith('Fwd:')
+        ? this.selEmail.subject : 'Fwd: '+(this.selEmail.subject||'');
+      this.composeBody = '';
+      this.composeOpen = true;
+    },
+    async aiDraftCompose() {
+      if (!this.selEmail) return;
+      this.composeSending = true;
+      const tone = this.composeMode==='reply' ? '正式' : '友好';
+      const res = await fetch('/api/stream/draft', {method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({email_id:this.selEmail.id, tone})});
+      this.composeBody = '';
+      await this._readSSE(res, (d)=>{ if(d.text) this.composeBody+=d.text; },
+                              ()=>{ this.composeSending=false; });
+    },
+    async sendCompose() {
+      if (!this.composeTo.trim() || !this.composeSubject.trim()) return;
+      this.composeSending = true;
+      try {
+        const payload = {
+          to: this.composeTo, cc: this.composeCc,
+          subject: this.composeSubject, body: this.composeBody,
+        };
+        if (this.composeMode==='reply' && this.selEmail?.entry_id)
+          payload.reply_to_entry_id = this.selEmail.entry_id;
+        const url = this.composeMode==='forward' && this.selEmail
+          ? `/api/emails/${this.selEmail.id}/forward`
+          : '/api/emails/send';
+        const body = this.composeMode==='forward'
+          ? {to: this.composeTo, note: this.composeBody}
+          : payload;
+        const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(body)});
+        const d = await r.json();
+        if (d.ok) {
+          this.composeOpen=false;
+          this.toast('📤 已加入发送队列（需在工作机桌面执行 daemon.py）');
+        } else { this.toast('❌ ' + (d.error||'发送失败')); }
+      } finally { this.composeSending=false; }
+    },
+
+    // ── 删除 ─────────────────────────────────────────────────────────
+    confirmDelete() { if (this.selEmail) this.deleteConfirm=true; },
+    async doDelete(permanent) {
+      this.deleteConfirm=false;
+      const r = await fetch(`/api/emails/${this.selEmail.id}?permanent=${permanent}`,
+        {method:'DELETE'});
+      const d = await r.json();
+      if (d.ok) {
+        this.emails = this.emails.filter(e=>e.id!==this.selEmail.id);
+        this.selEmail=null; this.selId=null;
+        this.toast('🗑️ 已删除');
+      }
+    },
+
+    // ── Toast ────────────────────────────────────────────────────────
+    toast(msg) {
+      this.toastMsg=msg;
+      clearTimeout(this._toastTimer);
+      this._toastTimer=setTimeout(()=>this.toastMsg='', 2500);
+    },
+  }
+}
+</script>
+</body>
+</html>

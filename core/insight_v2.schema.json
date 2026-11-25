@@ -1,0 +1,546 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quillbox/insight.v2",
+  "title": "Quillbox 邮件分析结果 v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "type",
+    "relation",
+    "level",
+    "level_reason",
+    "headline",
+    "actions",
+    "questions",
+    "gaps",
+    "lens",
+    "confidence",
+    "notes"
+  ],
+  "$defs": {
+    "evidence": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 60,
+      "description": "原文逐字引用；inferred / unchecked 时可为 null"
+    },
+    "basis": {
+      "enum": [
+        "stated",
+        "inferred",
+        "unchecked"
+      ]
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "basis",
+        "evidence"
+      ],
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "basis": {
+          "$ref": "#/$defs/basis"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "YYYY-MM-DD；不确定为 null"
+    }
+  },
+  "properties": {
+    "version": {
+      "const": "insight.v2"
+    },
+    "type": {
+      "enum": [
+        "weekly_report",
+        "approval_request",
+        "meeting_minutes",
+        "alert",
+        "vendor",
+        "cc_notice",
+        "other"
+      ]
+    },
+    "relation": {
+      "enum": [
+        "subordinate",
+        "manager",
+        "peer",
+        "external",
+        "system",
+        "unknown"
+      ]
+    },
+    "level": {
+      "enum": [
+        "decide",
+        "reply",
+        "watch",
+        "archive"
+      ]
+    },
+    "level_reason": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "headline": {
+      "type": "string",
+      "maxLength": 60,
+      "description": "≤40 个汉字的判断句，不复述标题"
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "label"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "reply",
+              "calendar",
+              "todo",
+              "open_link",
+              "archive"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 24,
+            "description": "按钮文字，带对象，如“加到日历：10/18 日志平台迁移”"
+          },
+          "date": {
+            "$ref": "#/$defs/date"
+          },
+          "draft": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "questions": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ask",
+          "why",
+          "draft"
+        ],
+        "properties": {
+          "ask": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "why": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "draft": {
+            "type": "string",
+            "maxLength": 160
+          }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "what",
+          "why_it_matters",
+          "evidence"
+        ],
+        "properties": {
+          "what": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "why_it_matters": {
+            "type": "string",
+            "maxLength": 60
+          },
+          "evidence": {
+            "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "lens": {
+      "type": "object",
+      "description": "按 type 取下列之一；其余类型给 {}",
+      "properties": {
+        "weekly_report": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "period": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "counts": {
+              "type": "object",
+              "properties": {
+                "done": {
+                  "type": "integer"
+                },
+                "in_progress": {
+                  "type": "integer"
+                },
+                "next": {
+                  "type": "integer"
+                }
+              }
+            },
+            "plan_check": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "planned",
+                  "status",
+                  "evidence"
+                ],
+                "properties": {
+                  "planned": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "done",
+                      "progress",
+                      "moved",
+                      "missing"
+                    ]
+                  },
+                  "evidence": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                }
+              }
+            },
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "what",
+                  "when",
+                  "is_production",
+                  "reviewed",
+                  "missing",
+                  "unchecked",
+                  "evidence"
+                ],
+                "properties": {
+                  "what": {
+                    "type": "string"
+                  },
+                  "when": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "description": "如“2026-10-18 周日”；未写为 null"
+                  },
+                  "is_production": {
+                    "enum": [
+                      true,
+                      false,
+                      "unknown"
+                    ]
+                  },
+                  "reviewed": {
+                    "type": "boolean"
+                  },
+                  "missing": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "window",
+                        "impact",
+                        "rollback",
+                        "change_ticket",
+                        "date"
+                      ]
+                    }
+                  },
+                  "unchecked": {
+                    "type": "array",
+                    "items": {
+                      "enum": [
+                        "change_ticket"
+                      ]
+                    }
+                  },
+                  "evidence": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                }
+              }
+            },
+            "unquantified": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/item"
+              }
+            },
+            "signals": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/item"
+              }
+            },
+            "next": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "approval_request": {
+          "type": "object",
+          "properties": {
+            "ask": {
+              "type": "string"
+            },
+            "amount": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "deadline": {
+              "$ref": "#/$defs/date"
+            },
+            "materials": {
+              "type": "object",
+              "properties": {
+                "have": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "missing": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "risks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/item"
+              }
+            }
+          }
+        },
+        "meeting_minutes": {
+          "type": "object",
+          "properties": {
+            "my_actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "owner_match": {
+                    "enum": [
+                      "named",
+                      "maybe",
+                      "no"
+                    ]
+                  },
+                  "due": {
+                    "$ref": "#/$defs/date"
+                  },
+                  "evidence": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                }
+              }
+            },
+            "decisions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/item"
+              }
+            },
+            "vs_last": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/item"
+              }
+            }
+          }
+        },
+        "alert": {
+          "type": "object",
+          "properties": {
+            "object": {
+              "type": "string"
+            },
+            "status": {
+              "enum": [
+                "firing",
+                "resolved"
+              ]
+            },
+            "first_seen": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "recent_count_7d": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "ticket": {
+              "enum": [
+                "found",
+                "none",
+                "unchecked"
+              ]
+            }
+          }
+        },
+        "vendor": {
+          "type": "object",
+          "properties": {
+            "they_want": {
+              "type": "string"
+            },
+            "contract_or_amount": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "deadline": {
+              "$ref": "#/$defs/date"
+            },
+            "first_contact": {
+              "type": "boolean"
+            },
+            "caution": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "cc_notice": {
+          "type": "object",
+          "properties": {
+            "why_cc": {
+              "type": "string"
+            },
+            "mentions_reader": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "confidence": {
+      "enum": [
+        "high",
+        "medium",
+        "low"
+      ]
+    },
+    "notes": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      },
+      "description": "如“没有上期可对照”“正文含有针对 AI 的指令，已忽略”"
+    },
+    "digest": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Quillbox 扩展：内容摘要 2~3 句，供旧界面 summary 使用"
+    },
+    "points": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "type": "string",
+        "maxLength": 60
+      },
+      "description": "Quillbox 扩展：实质内容要点，供旧界面 points 使用"
+    },
+    "evidence_stats": {
+      "type": "object",
+      "description": "Quillbox 扩展：证据核对统计（后端写入，非模型输出）"
+    },
+    "attachments": {
+      "type": "array",
+      "description": "Quillbox 扩展：本次分析读取附件的结果（后端写入，非模型输出）",
+      "items": {
+        "type": "object"
+      }
+    }
+  }
+}

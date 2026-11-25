@@ -1,0 +1,364 @@
+/* ============================================
+   Quillbox - Custom Styles
+   Tailwind handles most styling via CDN Play.
+   This file covers animations, skeleton screens,
+   and utility classes not available in Tailwind.
+   ============================================ */
+
+/* --- Skeleton Loading Animation --- */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, 
+    var(--skeleton-base) 25%, 
+    var(--skeleton-shine) 50%, 
+    var(--skeleton-base) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+:root {
+  --skeleton-base: #E5E7EB;
+  --skeleton-shine: #F3F4F6;
+}
+
+.dark {
+  --skeleton-base: #374151;
+  --skeleton-shine: #4B5563;
+}
+
+/* --- Typewriter cursor for AI streaming --- */
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.ai-cursor::after {
+  content: '▊';
+  display: inline;
+  animation: blink-cursor 0.8s step-end infinite;
+  color: var(--cursor-color, #4F46E5);
+  margin-left: 1px;
+}
+
+.dark .ai-cursor::after {
+  --cursor-color: #818CF8;
+}
+
+/* --- Panel slide transitions --- */
+.slide-enter {
+  transform: translateX(100%);
+  opacity: 0;
+}
+.slide-enter-active {
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform 200ms ease-out, opacity 200ms ease-out;
+}
+.slide-leave-active {
+  transform: translateX(100%);
+  opacity: 0;
+  transition: transform 200ms ease-in, opacity 200ms ease-in;
+}
+
+/* --- Command palette backdrop --- */
+.cmd-backdrop {
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+/* --- Scrollbar styling --- */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #D1D5DB;
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #9CA3AF;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #4B5563;
+}
+.dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #6B7280;
+}
+
+/* --- Active email indicator --- */
+.email-active {
+  position: relative;
+}
+.email-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: #4F46E5;
+}
+.dark .email-active::before {
+  background: #818CF8;
+}
+
+/* --- Unread dot indicator --- */
+.unread-dot::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4F46E5;
+}
+.dark .unread-dot::before {
+  background: #818CF8;
+}
+
+/* --- Focus visible for keyboard nav --- */
+.focus-ring:focus-visible {
+  outline: 2px solid #4F46E5;
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+.dark .focus-ring:focus-visible {
+  outline-color: #818CF8;
+}
+
+/* --- Email body content reset --- */
+.email-body img {
+  max-width: 100%;
+  height: auto;
+}
+.email-body a {
+  color: #4F46E5;
+  text-decoration: underline;
+}
+.dark .email-body a {
+  color: #818CF8;
+}
+.email-body blockquote {
+  border-left: 3px solid #E5E7EB;
+  padding-left: 12px;
+  margin: 8px 0;
+  color: #6B7280;
+}
+.dark .email-body blockquote {
+  border-left-color: #374151;
+  color: #9CA3AF;
+}
+
+/* --- Transition utilities --- */
+.transition-panel {
+  transition: transform 200ms ease-out, opacity 200ms ease-out;
+}
+
+/* --- Sidebar resize handle --- */
+.sidebar-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 20;
+  transition: background 150ms ease;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle:active {
+  background: #4F46E5;
+}
+.dark .sidebar-resize-handle:hover,
+.dark .sidebar-resize-handle:active {
+  background: #818CF8;
+}
+
+/* --- 分栏拖拉手柄（列表栏／详情栏之间）---
+   与侧边栏手柄同一视觉语言；单独一个类名，避免动到已验证的侧边栏样式。 */
+.pane-resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 20;
+  transition: background 150ms ease;
+}
+.pane-resize-handle:hover,
+.pane-resize-handle:active {
+  background: #4F46E5;
+}
+.dark .pane-resize-handle:hover,
+.dark .pane-resize-handle:active {
+  background: #818CF8;
+}
+
+/* --- 手柄可抓性---
+   4px 的透明条在视觉上不存在、在手感上也抓不着。两点补救：
+     1) ::before 把命中区扩到 12px，且只向右扩——向左 1px 以内，
+        因为列表栏右缘内侧是 6px 宽的滚动条，扩过去会把滚动拖拽吃掉；
+     2) ::after 给一条常驻的抓握指示，让"这里可以拖"看得出来。
+   两个伪元素都是绝对定位，不影响布局宽度。 */
+.pane-resize-handle,
+.sidebar-resize-handle {
+  position: relative;
+}
+
+/* 命中区扩大：1px 覆盖可见边框，向右 7px 进邻栏，合计 12px */
+.pane-resize-handle::before,
+.sidebar-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  right: -7px;
+  cursor: col-resize;
+}
+
+/* 常驻抓握指示：静止浅灰，hover 转品牌色 */
+.pane-resize-handle::after,
+.sidebar-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 1px;
+  width: 2px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: 1px;
+  background: #C7CBD1;
+  transition: background 150ms ease, height 150ms ease;
+  pointer-events: none;
+}
+.pane-resize-handle:hover::after,
+.pane-resize-handle:active::after,
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:active::after {
+  background: #FFFFFF;
+  height: 44px;
+  margin-top: -22px;
+}
+.dark .pane-resize-handle::after,
+.dark .sidebar-resize-handle::after {
+  background: #4B5563;
+}
+
+/* --- AI 聊天面板：纯 CSS 滑动，不依赖 Alpine 过渡引擎/Tailwind CDN ---
+   避免 x-transition 的 leave 回调挂起导致面板“收不回去”的问题。 */
+.ai-panel {
+  transform: translateX(100%);
+  transition: transform 200ms ease;
+  will-change: transform;
+}
+.ai-panel.ai-panel-open {
+  transform: translateX(0);
+}
+/* 关闭时（滑出屏幕）禁止捕获点击，避免遮挡正文 */
+.ai-panel:not(.ai-panel-open) {
+  pointer-events: none;
+}
+
+/* --- 撰写邮件：富文本编辑器 --- */
+.compose-editor:empty::before {
+  content: attr(data-placeholder);
+  color: #9CA3AF;
+  pointer-events: none;
+}
+.compose-editor img { max-width: 100%; height: auto; }
+.compose-editor a { color: #4F46E5; text-decoration: underline; }
+.dark .compose-editor a { color: #818CF8; }
+.compose-editor ul { list-style: disc; padding-left: 1.5em; }
+.compose-editor ol { list-style: decimal; padding-left: 1.5em; }
+.compose-editor table, .email-body table { max-width: 100%; }
+.compose-editor td, .compose-editor th { min-width: 40px; }
+
+.tb-btn {
+  padding: 4px;
+  border-radius: 6px;
+  color: #6B7280;
+  transition: background 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tb-btn:hover { background: #F3F4F6; }
+.dark .tb-btn { color: #9CA3AF; }
+.dark .tb-btn:hover { background: #374151; }
+
+/* --- 光标：统一用箭头，不用手型---
+   用户经远程桌面操作，RDP 下光标被放大很多倍，手型比箭头难定位。
+   index.html 里的 cursor-pointer / cursor-grab 已逐个替换成 cursor-default，
+   这里再加一道兜底：以后新代码若又带上手型类，也不会生效。
+   必须用 !important —— app.css 在 Tailwind CDN 注入之前加载，
+   同权重下 Tailwind 的工具类会赢。
+
+   刻意不覆盖 col-resize：它不是手型，且是分栏"这条缝能拖"的唯一提示；
+   输入框的 text 光标同理保留。 */
+a, button, [role="button"], summary, label,
+.cursor-pointer, .cursor-grab, .cursor-grabbing {
+  cursor: default !important;
+}
+.pane-resize-handle, .pane-resize-handle::before,
+.sidebar-resize-handle, .sidebar-resize-handle::before {
+  cursor: col-resize !important;
+}
+input, textarea, [contenteditable="true"] {
+  cursor: text !important;
+}
+
+/* --- 富文本工具栏--- */
+/* 按钮尺寸刻意不缩小：用户经远程桌面操作、光标被放大，越小越难点。 */
+.tb-btn-on { background: #E0E7FF !important; color: #4338CA !important; }
+.dark .tb-btn-on { background: #3730A3 !important; color: #E0E7FF !important; }
+.tb-select {
+  height: 26px; padding: 0 4px; font-size: 12px;
+  border: 1px solid #E5E7EB; border-radius: 4px;
+  background: transparent; color: #374151; cursor: default;
+}
+.dark .tb-select { border-color: #374151; color: #D1D5DB; background: #1F2937; }
+.tb-select:focus { outline: none; border-color: #A5B4FC; }
+/* 色块给到 20px：RDP 下太小的色块几乎点不中 */
+.tb-swatch {
+  width: 20px; height: 20px; border-radius: 4px;
+  border: 1px solid rgba(0,0,0,.15); cursor: default;
+}
+.tb-swatch:hover { outline: 2px solid #6366F1; outline-offset: 1px; }
+.tb-mini {
+  padding: 3px 4px; font-size: 11px; border-radius: 4px;
+  background: #F3F4F6; color: #374151; cursor: default;
+}
+.tb-mini:hover { background: #E5E7EB; }
+.dark .tb-mini { background: #374151; color: #D1D5DB; }
+.dark .tb-mini:hover { background: #4B5563; }
+.tb-mini-danger { color: #B91C1C; }
+.dark .tb-mini-danger { color: #FCA5A5; }
+/* 编辑器内表格：给个可见边框，否则在深色主题下看不出结构 */
+.compose-editor table { border-collapse: collapse; }
+.compose-editor td, .compose-editor th { border: 1px solid #9CA3AF; padding: 4px 8px; }
+.compose-editor blockquote { margin: 8px 0; padding: 4px 0 4px 12px; border-left: 3px solid #D1D5DB; }
+
+/* 带文字的工具栏按钮：纯图标的可发现性不够（表格按钮不好找） */
+.tb-btn-wide { width: auto !important; padding-left: 6px; padding-right: 7px;
+               display: inline-flex; align-items: center; }
+/* 编辑器里的标题与代码块：内联样式已带一份，这里只保证编辑时所见即所得 */
+.compose-editor h1 { font-size: 24px; font-weight: 700; margin: 14px 0 8px; }
+.compose-editor h2 { font-size: 20px; font-weight: 700; margin: 12px 0 6px; }
+.compose-editor h3 { font-size: 17px; font-weight: 600; margin: 10px 0 5px; }
+.compose-editor pre { font-family: Consolas, Monaco, monospace; font-size: 13px;
+  background: #F6F8FA; padding: 10px 12px; border-radius: 4px;
+  border: 1px solid #E5E7EB; white-space: pre-wrap; margin: 8px 0; }
+.dark .compose-editor pre { background: #111827; border-color: #374151; }

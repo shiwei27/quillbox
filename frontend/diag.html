@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Quillbox Diagnostics</title></head>
+<body style="font-family:monospace; padding:20px; background:#1a1a2e; color:#0f0;">
+<h2>Quillbox Frontend Diagnostics</h2>
+<pre id="log"></pre>
+<script>
+const log = document.getElementById('log');
+function L(msg) { log.textContent += msg + '\n'; }
+
+L('=== Step 1: Test API ===');
+fetch('/api/stats').then(r=>r.json()).then(d=>{
+  L('  /api/stats: OK - total=' + d.total + ', unread=' + d.unread);
+}).catch(e=>L('  /api/stats: FAILED - ' + e));
+
+fetch('/api/emails?view=inbox&page=0&page_size=3').then(r=>r.json()).then(d=>{
+  L('  /api/emails: OK - got ' + (d.emails||[]).length + ' emails, total=' + d.total);
+  if(d.emails && d.emails[0]) L('  First email subject: ' + (d.emails[0].subject||'').slice(0,50));
+}).catch(e=>L('  /api/emails: FAILED - ' + e));
+
+L('\n=== Step 2: Test CDN Resources ===');
+var cdns = [
+  'https://cdn.tailwindcss.com/3.4.17',
+  'https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js',
+  'https://cdn.jsdelivr.net/npm/@alpinejs/persist@3.14.3/dist/cdn.min.js',
+  'https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js',
+];
+cdns.forEach(function(url) {
+  var t0 = Date.now();
+  fetch(url, {mode:'no-cors'}).then(function(){
+    L('  ' + url.split('/').pop() + ': OK (' + (Date.now()-t0) + 'ms)');
+  }).catch(function(e){
+    L('  ' + url.split('/').pop() + ': FAILED (' + (Date.now()-t0) + 'ms) - ' + e);
+  });
+});
+
+L('\n=== Step 3: Test Module Loading ===');
+var t0 = Date.now();
+import('/frontend/js/api.js').then(function(mod){
+  L('  api.js: OK (' + (Date.now()-t0) + 'ms) - exports: ' + Object.keys(mod).join(', '));
+}).catch(function(e){
+  L('  api.js: FAILED - ' + e.message);
+});
+
+import('/frontend/js/stores/mail.js').then(function(mod){
+  L('  stores/mail.js: OK - default export: ' + typeof mod.default);
+}).catch(function(e){
+  L('  stores/mail.js: FAILED - ' + e.message);
+});
+
+import('/frontend/js/stores/ui.js').then(function(mod){
+  L('  stores/ui.js: OK');
+}).catch(function(e){
+  L('  stores/ui.js: FAILED - ' + e.message);
+});
+
+import('/frontend/js/stores/ai.js').then(function(mod){
+  L('  stores/ai.js: OK');
+}).catch(function(e){
+  L('  stores/ai.js: FAILED - ' + e.message);
+});
+
+import('/frontend/js/stores/settings.js').then(function(mod){
+  L('  stores/settings.js: OK');
+}).catch(function(e){
+  L('  stores/settings.js: FAILED - ' + e.message);
+});
+
+import('/frontend/js/app.js').then(function(mod){
+  L('  app.js (full): OK');
+}).catch(function(e){
+  L('  app.js (full): FAILED - ' + e.message);
+});
+
+L('\n=== Step 4: Alpine.js Check ===');
+setTimeout(function(){
+  L('  Alpine global: ' + (typeof Alpine !== 'undefined' ? 'EXISTS' : 'MISSING'));
+  if(typeof Alpine !== 'undefined') {
+    L('  Alpine.store("mail"): ' + (Alpine.store('mail') ? 'EXISTS' : 'MISSING'));
+    L('  Alpine.store("ui"): ' + (Alpine.store('ui') ? 'EXISTS' : 'MISSING'));
+    if(Alpine.store('mail')) {
+      L('  mail.emails.length: ' + Alpine.store('mail').emails.length);
+    }
+  }
+  L('\n=== Step 5: Browser Info ===');
+  L('  userAgent: ' + navigator.userAgent);
+  L('  location: ' + location.href);
+  L('\n=== DONE ===');
+}, 4000);
+</script>
+</body>
+</html>

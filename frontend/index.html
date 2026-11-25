@@ -1,0 +1,2175 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quillbox - 智能邮件助手</title>
+
+  <!-- 诊断信标：捕获前端错误与关键事件，上报 /api/clientlog -->
+  <script>
+    (function(){
+      function beacon(level, msg){
+        try {
+          var payload = JSON.stringify({ level: level, msg: String(msg) });
+          if (navigator.sendBeacon) {
+            navigator.sendBeacon('/api/clientlog', new Blob([payload], { type: 'application/json' }));
+          } else {
+            fetch('/api/clientlog', { method:'POST', headers:{'Content-Type':'application/json'}, body: payload, keepalive: true });
+          }
+        } catch(e){}
+      }
+      window.__beacon = beacon;
+      window.addEventListener('error', function(ev){
+        beacon('error', (ev.message||'') + ' @ ' + (ev.filename||'') + ':' + (ev.lineno||'') + ' ' + ((ev.error && ev.error.stack) || ''));
+      });
+      window.addEventListener('unhandledrejection', function(ev){
+        var r = ev.reason;
+        beacon('reject', ((r && r.message) || String(r)) + ' ' + ((r && r.stack) || ''));
+      });
+    })();
+  </script>
+
+  <!-- Tailwind CSS CDN Play (容错加载，如果CDN不可用页面仍然可用) -->
+  <script>
+    // 预设Tailwind config（CDN加载后会自动读取）
+    window.tailwind = window.tailwind || {};
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { DEFAULT: '#4F46E5', light: '#EEF2FF', dark: '#818CF8' },
+          },
+          width: { sidebar: 'var(--sidebar-width, 180px)', list: '340px', 'ai-panel': '380px' },
+          maxWidth: { search: '500px' },
+          height: { topbar: '48px', 'email-row': '56px' },
+          transitionDuration: { panel: '200ms' },
+        },
+      },
+    };
+    // 异步加载 Tailwind CDN
+    (function() {
+      var s = document.createElement('script');
+      // SANITIZE-HARDEN-20260930：改为本地副本（与 CDN 同一 sha256 176e8946…，两条网络路径核对）。
+      // 原先每次打开页面都从第三方 CDN 拉脚本并以本应用同源权限执行；CSP 已禁止外站脚本。
+      s.src = '/frontend/js/vendor/tailwind-play-3.4.17.js';
+      s.onerror = function() { console.warn('[Quillbox] Tailwind CDN unavailable, styles degraded'); };
+      document.head.appendChild(s);
+    })();
+  </script>
+
+  <!-- 暗色模式防闪烁：在任何渲染之前立即应用主题 -->
+  <script>
+    (function() {
+      const theme = localStorage.getItem('quillbox-theme');
+      const isDark = theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      if (isDark) document.documentElement.classList.add('dark');
+    })();
+  </script>
+
+  <!-- Lucide Icons (异步加载，避免阻塞) -->
+  <script src="/frontend/js/vendor/lucide.min.js"></script>
+
+  <!-- App CSS -->
+  <link rel="stylesheet" href="/frontend/css/app.css?v=20261110a">
+
+  <!-- App JS (Bundle — 所有模块合并) — 必须在 Alpine 之前，确保 alpine:init 时 stores 已准备好 -->
+  <script defer src="/frontend/js/bundle.js?v=20261110a"></script>
+
+  <!-- Alpine.js (锁定版本) — 在 bundle 之后执行，触发 alpine:init 时 stores 已注册 -->
+  <script defer src="/frontend/js/vendor/alpine-persist.min.js"></script>
+  <script defer src="/frontend/js/vendor/alpinejs.min.js"></script>
+</head>
+<body class="h-full bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-50 overflow-hidden"
+      x-data
+      x-init="
+        $nextTick(async () => {
+          try { lucide.createIcons(); } catch(e) { console.warn('[Quillbox] lucide error:', e); }
+          // 等待 stores 注册完成
+          let retries = 0;
+          while ((!$store.mail || !$store.ui || !$store.settings) && retries < 50) {
+            await new Promise(r => setTimeout(r, 50));
+            retries++;
+          }
+          if ($store.ui) $store.ui.init();
+          if ($store.mail) await $store.mail.init();
+          if ($store.settings) $store.settings.init();
+          // 重新渲染图标
+          try { lucide.createIcons(); } catch(e) {}
+        })
+      ">
+
+  <!-- ==================== 主布局容器 ==================== -->
+  <div class="flex flex-col h-full">
+
+    <!-- ==================== 顶栏 ==================== -->
+    <header class="h-topbar flex-shrink-0 flex items-center px-4 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 z-30"
+            x-data="topBar">
+      <!-- 左侧: 菜单 + Logo -->
+      <div class="flex items-center gap-3 flex-shrink-0"
+           :style="'width:' + ($store.ui.sidebarCollapsed ? 'auto' : ($store.ui.sidebarWidth || 180) + 'px')">
+        <button @click="toggleSidebar()" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 focus-ring" aria-label="切换侧栏">
+          <i data-lucide="menu" class="w-5 h-5"></i>
+        </button>
+        <span class="text-lg font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Quillbox</span>
+      </div>
+
+      <!-- 中间: 搜索栏 -->
+      <div class="flex-1 flex justify-center" x-data="searchBar">
+        <button @click="$store.ui.openOmni()" @keydown.window.slash.prevent="$store.ui.openOmni()"
+                class="w-full max-w-xs flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition"
+                title="点击设置搜索条件">
+          <i data-lucide="search" class="w-4 h-4 flex-shrink-0"></i>
+          <span class="flex-1 text-left truncate" x-text="query || '搜索邮件、问 AI、命令…（⌘K）'"></span>
+          <span x-show="query" @click.stop="$store.mail.saveCurrentSearch()" class="flex-shrink-0 text-gray-400 hover:text-indigo-600" title="保存为智能视图"><i data-lucide="bookmark" class="w-3.5 h-3.5"></i></span>
+          <span x-show="query" @click.stop="clear()" class="flex-shrink-0 text-gray-400 hover:text-gray-600" title="清除"><i data-lucide="x" class="w-3.5 h-3.5"></i></span>
+        </button>
+
+        <button @click="openAdv()" title="高级搜索" class="ml-1 flex-shrink-0 px-2.5 py-1.5 text-xs rounded-lg border border-gray-200 dark:border-gray-700 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-gray-700 transition">高级</button>
+        <!-- 高级搜索弹窗（点选式，无需手写操作符）-->
+        <div x-show="advOpen" style="display:none" @keydown.escape.window="advOpen=false" class="fixed inset-0 z-[70] flex items-start justify-center pt-[12vh]">
+          <div class="absolute inset-0 bg-black/30 dark:bg-black/50" @click="advOpen=false"></div>
+          <div class="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5 space-y-2 text-left">
+            <div class="flex items-center justify-between mb-1">
+              <h3 class="font-semibold text-sm">高级搜索</h3>
+              <button @click="advOpen=false" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+            <label class="block text-xs text-gray-500">发件人（姓名或邮箱）<input x-model="adv.from" placeholder="如 noc@ / 张三" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+            <label class="block text-xs text-gray-500">收件人<input x-model="adv.to" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+            <label class="block text-xs text-gray-500">主题包含<input x-model="adv.subject" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+            <label class="block text-xs text-gray-500">正文包含<input x-model="adv.body" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+            <div class="flex gap-2">
+              <label class="flex-1 text-xs text-gray-500">起始日期<input type="date" x-model="adv.after" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+              <label class="flex-1 text-xs text-gray-500">截止日期<input type="date" x-model="adv.before" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+            </div>
+            <label class="block text-xs text-gray-500">关键词（其他）<input x-model="adv.text" @keydown.enter="applyAdv()" x-init="$nextTick(() => {})" class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></label>
+            <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300 pt-1"><input type="checkbox" x-model="adv.hasAttachment" class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 仅含附件的邮件</label>
+            <div class="flex justify-end gap-2 pt-2">
+              <button @click="advOpen=false" class="px-3 py-1.5 text-xs rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">取消</button>
+              <button @click="applyAdv()" class="px-4 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium">搜索</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右侧: 操作按钮 -->
+      <div class="flex items-center gap-1 ml-4">
+        <!-- 顶栏也放一个：侧栏可折叠到零宽（!w-0），折叠后侧栏那个按钮就没了 -->
+        <button @click="$store.ui.openCompose('new')" class="p-2 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 focus-ring" title="写邮件 (C)">
+          <i data-lucide="pencil" class="w-5 h-5"></i>
+        </button>
+        <button @click="toggleAI()" class="p-2 rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 focus-ring" title="AI助手">
+          <i data-lucide="sparkles" class="w-5 h-5"></i>
+        </button>
+        <button @click="sync()" class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 focus-ring" :class="syncRunning && 'animate-spin'" title="同步邮件">
+          <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+        </button>
+        <button @click="$store.mail.setView('dashboard')" class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 focus-ring" :class="$store.mail.view === 'dashboard' && 'text-indigo-600 dark:text-indigo-400'" title="统计看板">
+          <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+        </button>
+        <button @click="openSettings()" class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 focus-ring" title="设置">
+          <i data-lucide="settings" class="w-5 h-5"></i>
+        </button>
+        <button @click="toggleTheme()" class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 focus-ring" title="切换主题">
+          <i x-show="!isDark" data-lucide="moon" class="w-5 h-5"></i>
+          <i x-show="isDark" data-lucide="sun" class="w-5 h-5"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- ==================== 主体三栏布局 ==================== -->
+    <div class="flex flex-1 overflow-hidden transition-all duration-200">
+
+
+      <!-- ========== 左侧导航栏 ========== -->
+      <aside class="flex-shrink-0 border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex flex-col overflow-hidden transition-all duration-200 relative"
+             :class="$store.ui.sidebarCollapsed && '!w-0 !border-r-0'"
+             :style="!$store.ui.sidebarCollapsed && 'width:' + ($store.ui.sidebarWidth || 180) + 'px'"
+             x-data="sidebar">
+
+        <!-- 写邮件：侧栏最显眼的位置。此前新建邮件只能靠命令面板（快捷键 C），
+             界面上没有任何入口。 -->
+        <div class="px-2 pt-2 pb-1 flex-shrink-0">
+          <button @click="$store.ui.openCompose('new')"
+                  class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition shadow-sm focus-ring"
+                  title="写邮件 (C)">
+            <i data-lucide="pencil" class="w-4 h-4"></i>
+            <span>写邮件</span>
+          </button>
+        </div>
+
+        <nav class="flex-1 overflow-y-auto custom-scrollbar py-2 px-2">
+          <!-- 主导航 -->
+          <div class="space-y-0.5">
+            <button @click="setView('inbox')"
+                    :class="(view === 'inbox' && !$store.mail.currentFolder && !$store.mail.currentMailbox && !$store.mail.currentTag) ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="inbox" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">收件箱</span>
+              <!-- 徽标可点击：直达未读视图。未读邮件可能排在列表第 6 页（按时间倒序），
+                   只给一个数字用户翻不到，只能靠它跳过去。 -->
+              <span x-show="unreadCount > 0" x-text="unreadCount"
+                    role="button" tabindex="0"
+                    :aria-label="'还有 ' + unreadCount + ' 封未读，点击查看'"
+                    :title="'还有 ' + unreadCount + ' 封未读，点击查看'"
+                    @click.stop="setView('unread')"
+                    @keydown.enter.stop.prevent="setView('unread')"
+                    @keydown.space.stop.prevent="setView('unread')"
+                    class="text-xs bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded-full font-semibold cursor-pointer hover:bg-indigo-200 dark:hover:bg-indigo-800 focus:outline-none focus:ring-2 focus:ring-indigo-400"></span>
+            </button>
+
+            <button @click="setView('starred')"
+                    :class="view === 'starred' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="star" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">星标</span>
+            </button>
+
+            <button @click="setView('unread')"
+                    :class="view === 'unread' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="mail" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">未读</span>
+            </button>
+
+            <button @click="setView('sent')"
+                    :class="view === 'sent' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="send" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">已发送</span>
+            </button>
+
+            <button @click="setView('trash')"
+                    :class="view === 'trash' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">回收站</span>
+            </button>
+
+            <button @click="setView('archived')"
+                    :class="view === 'archived' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="archive" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">归档</span>
+            </button>
+            <button @click="setView('topics')"
+                    :class="view === 'topics' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="layers" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">话题聚合</span>
+            </button>
+          </div>
+
+          <template x-if="$store.mail.globalFolders && $store.mail.globalFolders.length">
+            <div class="space-y-0.5 mt-1">
+              <p class="px-3 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">全部邮箱文件夹</p>
+              <template x-for="gf in $store.mail.globalFolders" :key="gf">
+                <button @click="$store.mail.enterGlobalFolder(gf)"
+                        :class="($store.mail.currentFolder===gf && !$store.mail.currentAccount) ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                        class="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm transition">
+                  <i data-lucide="folder" class="w-4 h-4 flex-shrink-0"></i>
+                  <span class="flex-1 text-left truncate" x-text="gf"></span>
+                </button>
+              </template>
+            </div>
+          </template>
+
+          <div class="my-2 border-t border-gray-200 dark:border-gray-700"></div>
+          <p class="px-3 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">标签</p>
+          <div class="px-2 pb-1 flex flex-wrap gap-1">
+            <template x-for="t in $store.mail.tagPalette" :key="t.name">
+              <button @click="$store.mail.currentTag===t.name ? $store.mail.setView('inbox') : $store.mail.setTag(t.name)"
+                      :class="$store.mail.currentTag === t.name ? 'ring-2 ring-offset-1 ring-indigo-400' : ''"
+                      class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs"
+                      :style="'background:'+t.color+'22;color:'+t.color">
+                <span class="w-2 h-2 rounded-full" :style="'background:'+t.color"></span>
+                <span x-text="t.name"></span>
+              </button>
+            </template>
+          </div>
+
+          <!-- 分隔线 -->
+          <div class="my-3 border-t border-gray-200 dark:border-gray-700"></div>
+
+          <!-- 保存的搜索 / 智能视图 -->
+          <template x-if="savedSearches && savedSearches.length">
+            <div class="space-y-0.5 mb-1">
+              <p class="px-3 py-1 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">智能视图</p>
+              <template x-for="ss in savedSearches" :key="ss.name">
+                <div class="group flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 text-sm text-gray-700 dark:text-gray-300">
+                  <i data-lucide="bookmark" class="w-4 h-4 flex-shrink-0"></i>
+                  <button @click="applySavedSearch(ss.query)" class="flex-1 text-left truncate" :title="ss.query" x-text="ss.name"></button>
+                  <button @click="deleteSavedSearch(ss.name)" class="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500" title="删除"><i data-lucide="x" class="w-3 h-3"></i></button>
+                </div>
+              </template>
+            </div>
+          </template>
+          <div x-show="savedSearches && savedSearches.length" class="my-3 border-t border-gray-200 dark:border-gray-700"></div>
+
+          <!-- 账户文件夹树 -->
+          <div class="space-y-1">
+            <div class="px-3 py-1 flex items-center justify-between">
+              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">账户</span>
+              <span class="flex items-center gap-2">
+                <button @click="$store.mail.importOutlook()" title="导入 Outlook 规则" class="text-gray-400 hover:text-indigo-600"><i data-lucide="download" class="w-3.5 h-3.5"></i></button>
+                <button @click="$store.mail.openFolderDlg()" title="新建文件夹/规则" class="text-gray-400 hover:text-indigo-600"><i data-lucide="folder-plus" class="w-3.5 h-3.5"></i></button>
+              </span>
+            </div>
+
+            <div x-show="$store.mail.folderDlg.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center" style="background:rgba(0,0,0,.45)">
+              <div class="w-full max-w-md bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 p-5 space-y-3">
+                <div class="flex items-center justify-between"><h3 class="font-semibold text-gray-800 dark:text-gray-100">新建文件夹 / 规则</h3><button @click="$store.mail.folderDlg.open=false" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800"><i data-lucide="x" class="w-4 h-4"></i></button></div>
+                <div><label class="block text-xs text-gray-500 mb-1">账户</label>
+                  <select x-model="$store.mail.folderDlg.account" class="w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+                    <option value="__global__">全部邮箱（全局文件夹）</option>
+                    <template x-for="a in $store.mail.displayAccounts" :key="a.name"><option :value="a.name" x-text="a.name"></option></template>
+                  </select></div>
+                <div class="flex gap-4 text-xs">
+                  <label class="flex items-center gap-1 cursor-default"><input type="radio" value="new" x-model="$store.mail.folderDlg.mode"> 新建文件夹</label>
+                  <label class="flex items-center gap-1 cursor-default"><input type="radio" value="existing" x-model="$store.mail.folderDlg.mode"> 归入已有文件夹</label>
+                </div>
+                <input x-show="$store.mail.folderDlg.mode==='new'" x-model="$store.mail.folderDlg.name" placeholder="新文件夹名（如 GPU采购）" class="w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+                <select x-show="$store.mail.folderDlg.mode==='existing'" x-model="$store.mail.folderDlg.existing" class="w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+                  <option value="">选择已有文件夹</option>
+                  <template x-for="f in $store.mail.folderOptions()" :key="f"><option :value="f" x-text="f"></option></template>
+                </select>
+                <div><label class="block text-xs text-gray-500 mb-1">规则条件（命中则归入该文件夹）</label>
+                  <div class="flex gap-2 mb-2">
+                    <select x-model="$store.mail.folderDlg.field" class="px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+                      <option value="from">发件人</option><option value="subject">主题</option><option value="subject_or_body">主题或正文</option><option value="to">收件人</option><option value="body">正文</option>
+                    </select>
+                    <select x-model="$store.mail.folderDlg.op" class="px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+                      <option value="contains">包含</option><option value="not_contains">不包含</option><option value="is">等于</option><option value="starts_with">开头是</option><option value="ends_with">结尾是</option>
+                    </select>
+                  </div>
+                  <input x-model="$store.mail.folderDlg.value" placeholder="关键词" class="w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+                </div>
+                <div class="flex justify-end gap-2 pt-1">
+                  <button @click="$store.mail.folderDlg.open=false" class="px-3 py-1.5 text-xs rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">取消</button>
+                  <button @click="$store.mail.submitFolderRule()" class="px-4 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium">创建并应用</button>
+                </div>
+              </div>
+            </div>
+            <template x-for="account in accounts" :key="account.name">
+              <div :draggable="editingAccount === account.name ? 'false' : 'true'"
+                   @dragstart="onDragStart(account, $event)"
+                   @dragover.prevent="onDragOver(account)"
+                   @dragleave="onDragLeave(account)"
+                   @drop.prevent="onDrop(account)"
+                   @dragend="onDragEnd()"
+                   class="rounded-md transition"
+                   :class="{
+                     'ring-2 ring-indigo-300 dark:ring-indigo-600': dragOverAccount === account.name && draggingAccount !== account.name,
+                     'opacity-50': draggingAccount === account.name
+                   }">
+                <div class="w-full flex items-center gap-1.5 pl-2 pr-2 py-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700 group">
+                  <i data-lucide="grip-vertical" class="w-3.5 h-3.5 text-gray-300 dark:text-gray-600 cursor-default flex-shrink-0" title="拖拽排序"></i>
+
+                  <!-- 展开 / 选择账户 -->
+                  <button x-show="editingAccount !== account.name" @click="toggleAccount(account.name)"
+                          class="flex items-center gap-1.5 flex-1 min-w-0 text-sm text-gray-700 dark:text-gray-300">
+                    <i data-lucide="chevron-right" class="w-3 h-3 transition-transform flex-shrink-0" :class="expandedAccounts[account.name] && 'rotate-90'"></i>
+                    <i data-lucide="user" class="w-4 h-4 flex-shrink-0"></i>
+                    <span class="flex-1 text-left truncate" x-text="account.displayName" :title="account.name"></span>
+                  </button>
+
+                  <!-- 重命名输入框 -->
+                  <template x-if="editingAccount === account.name">
+                    <input x-model="renameValue"
+                           x-init="$nextTick(() => { $el.focus(); $el.select(); })"
+                           @keydown.enter.prevent="commitRename(account.name)"
+                           @keydown.escape.prevent="cancelRename()"
+                           @blur="commitRename(account.name)"
+                           @click.stop
+                           class="flex-1 min-w-0 px-1.5 py-0.5 text-sm rounded border border-indigo-300 dark:border-indigo-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+                           placeholder="账户显示名" />
+                  </template>
+
+                  <span x-show="editingAccount !== account.name && account.unread > 0" x-text="account.unread" class="text-xs text-gray-500 flex-shrink-0"></span>
+
+                  <button x-show="editingAccount !== account.name" @click.stop="startRename(account)"
+                          class="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-400 flex-shrink-0 transition"
+                          title="重命名">
+                    <i data-lucide="pencil" class="w-3 h-3"></i>
+                  </button>
+                </div>
+
+                <div x-show="expandedAccounts[account.name]" x-transition.opacity.duration.150ms class="ml-7 space-y-0.5 mt-0.5">
+                  <template x-for="folder in account.folders" :key="folder">
+                    <button draggable="true"
+                            @dragstart="onFolderDragStart(account.name, folder, $event)"
+                            @dragover.prevent
+                            @drop.prevent="onFolderDrop(account.name, folder)"
+                            :class="[(draggingFolder===folder && draggingFolderAccount===account.name) ? 'opacity-40' : '',
+                                     ($store.mail.currentFolder === folder && $store.mail.currentAccount === account.name)
+                                       ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 font-medium'
+                                       : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700']"
+                            @click="selectFolder(account.name, folder)"
+                            class="w-full text-left px-3 py-1 rounded-md text-xs transition truncate cursor-default"
+                            x-text="folder">
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- 分隔线 -->
+          <div class="my-3 border-t border-gray-200 dark:border-gray-700"></div>
+
+          <!-- 通讯录 -->
+          <div>
+            <button @click="setView('contacts')"
+                    :class="view === 'contacts' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="users" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">通讯录</span>
+              <span x-show="$store.mail.contacts.length > 0" x-text="$store.mail.contacts.length" class="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded-full"></span>
+            </button>
+          </div>
+
+          <!-- 草稿箱 -->
+          <div>
+            <button @click="setView('drafts')"
+                    :class="view === 'drafts' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="file-edit" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">草稿箱</span>
+              <span x-show="$store.mail.drafts.length > 0" x-text="$store.mail.drafts.length" class="text-xs bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-400 px-1.5 py-0.5 rounded-full"></span>
+            </button>
+          </div>
+
+          <!-- 待办事项 -->
+          <div>
+            <button @click="setView('todos')"
+                    :class="view === 'todos' ? 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300'"
+                    class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition">
+              <i data-lucide="check-square" class="w-4 h-4"></i>
+              <span class="flex-1 text-left">待办事项</span>
+              <span x-show="todos.length > 0" x-text="todos.filter(t => t.status !== 'done').length" class="text-xs bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-400 px-1.5 py-0.5 rounded-full"></span>
+            </button>
+          </div>
+        </nav>
+
+        <!-- 底部快捷键提示 -->
+        <div class="px-3 py-2 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-400 dark:text-gray-500">
+          <kbd class="px-1 py-0.5 bg-gray-200 dark:bg-gray-700 rounded text-[10px]">⌘K</kbd> 命令面板
+        </div>
+      </aside>
+
+      <!-- 侧边栏拖拽调整手柄 -->
+      <div class="sidebar-resize-handle flex-shrink-0"
+           x-show="!$store.ui.sidebarCollapsed"
+           @mousedown.prevent="$store.ui.startSidebarResize($event)">
+      </div>
+
+
+      <!-- ========== 中间邮件列表 ========== -->
+      <div class="flex-shrink-0 border-r border-gray-200 dark:border-gray-700 flex flex-col overflow-hidden bg-white dark:bg-gray-900"
+           :style="'width:' + ($store.ui.listWidth || 340) + 'px'"
+           x-data="emailList">
+
+        <!-- 筛选栏 -->
+        <div class="flex items-center gap-1 px-3 py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0" x-init="$store.mail.loadTopicRules(); $store.mail.loadTopicCounts(); $store.mail.loadMailboxLabels()">
+          <span x-show="$store.mail.currentTopic" class="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 mr-1 max-w-[180px]">✨<span x-text="$store.mail.currentTopic" class="font-medium truncate"></span><button @click="$store.mail.setView('inbox')" title="退出话题" class="ml-0.5 hover:text-red-500">✕</button></span>
+          <button @click="setFilter('all')"
+                  :class="filter === 'all' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                  class="px-2.5 py-1 text-xs font-medium rounded-md transition">全部</button>
+          <button @click="setFilter('unread')"
+                  :class="filter === 'unread' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                  class="px-2.5 py-1 text-xs font-medium rounded-md transition">未读</button>
+          <button @click="setFilter('starred')"
+                  :class="filter === 'starred' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                  class="px-2.5 py-1 text-xs font-medium rounded-md transition">星标</button>
+          <button @click="setFilter('attachments')"
+                  :class="filter === 'attachments' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                  class="px-2.5 py-1 text-xs font-medium rounded-md transition">附件</button>
+          <!-- 邮箱来源筛选：内网 / 外网 / NOC（标签由 account 派生） -->
+          <div class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+          <button @click="$store.mail.setMailbox('')" title="不限邮箱"
+                  :class="!$store.mail.currentMailbox ? 'bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-100' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                  class="px-2.5 py-1 text-xs font-medium rounded-md transition">全部邮箱</button>
+          <template x-for="mb in $store.mail.mailboxChips" :key="'mb_'+mb.name">
+            <button @click="$store.mail.setMailbox(mb.name)" :title="mb.hint"
+                    :class="$store.mail.currentMailbox === mb.name ? mb.cls + ' ring-1 ring-inset ring-current' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                    class="px-2.5 py-1 text-xs font-medium rounded-md transition" x-text="mb.name"></button>
+          </template>
+          <div x-show="$store.mail.quickTopics.length" class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></div>
+          <template x-for="qt in $store.mail.quickTopics" :key="'q_'+qt.name">
+            <button @click="$store.mail.enterTopic(qt.name)" class="px-2.5 py-1 text-xs font-medium rounded-md transition text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 inline-flex items-center gap-1" title="进入话题">✨<span x-text="qt.name"></span><span x-show="($store.mail.topicCounts[qt.name]||{}).unread" class="text-[10px] px-1 rounded-full bg-indigo-500 text-white" x-text="($store.mail.topicCounts[qt.name]||{}).unread"></span></button>
+          </template>
+        </div>
+
+        <div x-show="$store.mail.currentTopic" class="px-3 py-2 border-b border-gray-100 dark:border-gray-800 bg-indigo-50/30 dark:bg-indigo-900/10 flex-shrink-0">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-xs text-gray-500 dark:text-gray-400">AI 文件夹简报</span>
+            <button @click="$store.mail.loadTopicDigest()" :disabled="$store.mail.topicDigestBusy" class="px-2 py-0.5 text-xs rounded bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"><span x-show="!$store.mail.topicDigestBusy">✨ 生成简报</span><span x-show="$store.mail.topicDigestBusy">生成中…</span></button>
+          </div>
+          <div x-show="$store.mail.topicDigest" class="mt-1 text-xs text-gray-600 dark:text-gray-300 whitespace-pre-wrap max-h-40 overflow-y-auto" x-text="$store.mail.topicDigest"></div>
+        </div>
+        <!-- 邮件列表 -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar" @scroll.throttle.150ms="onScroll($event)">
+          <!-- 骨架屏 -->
+          <template x-if="loading && emails.length === 0">
+            <div class="space-y-0">
+              <template x-for="i in 8" :key="i">
+                <div class="flex items-center gap-3 px-4 py-3.5 border-b border-gray-100 dark:border-gray-800">
+                  <div class="skeleton w-8 h-8 rounded-full flex-shrink-0"></div>
+                  <div class="flex-1 space-y-2">
+                    <div class="skeleton h-3.5 w-3/4 rounded"></div>
+                    <div class="skeleton h-3 w-full rounded"></div>
+                    <div class="skeleton h-2.5 w-1/2 rounded"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <!-- 批量操作栏 -->
+          <div x-show="selectedIds.length > 0" class="flex flex-wrap items-center gap-2 px-4 py-2 bg-indigo-50 dark:bg-indigo-900/30 border-b border-indigo-100 dark:border-indigo-800 text-xs">
+            <label class="flex items-center gap-1 cursor-default text-gray-600 dark:text-gray-300"><input type="checkbox" @change="selectAllVisible()" :checked="emails.length>0 && selectedIds.length>=emails.length" class="w-4 h-4 rounded border-gray-300 text-indigo-600"> 全选</label>
+            <span x-text="'已选 ' + selectedIds.length + ' 封'" class="font-medium text-indigo-700 dark:text-indigo-300"></span>
+            <button @click="bulkAction('read')" class="px-2 py-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800">标记已读</button>
+            <button @click="bulkAction('unread')" class="px-2 py-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800">未读</button>
+            <button @click="bulkAction('star')" class="px-2 py-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800">加星</button>
+            <select @change="if($event.target.value){bulkAction('category',$event.target.value); $event.target.value=''}" class="px-1.5 py-1 rounded border border-indigo-200 dark:border-indigo-700 bg-transparent focus:outline-none">
+              <option value="">分类为…</option>
+              <template x-for="c in categories" :key="c"><option :value="c" x-text="c"></option></template>
+            </select>
+            <button @click="bulkAction('delete')" class="px-2 py-1 rounded text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30">删除</button>
+            <button @click="clearSelection()" class="ml-auto px-2 py-1 rounded hover:bg-indigo-100 dark:hover:bg-indigo-800">取消</button>
+          </div>
+
+          <!-- 邮件行 -->
+          <template x-if="!loading || emails.length > 0">
+            <div>
+              <template x-for="email in emails" :key="email.id">
+                <div class="relative w-full flex items-start gap-2 px-2 py-2.5 border-b border-gray-100 dark:border-gray-800 transition-colors"
+                        :class="[
+                          selectedId === email.id ? 'email-active bg-indigo-50/50 dark:bg-indigo-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50',
+                          email.unread ? 'unread-dot' : '',
+                          isSelected(email.id) ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
+                        ]"
+                        style="min-height: 56px;" :data-email-id="email.id">
+                  <input type="checkbox" :checked="isSelected(email.id)" @click.stop @change="toggleSelect(email.id)"
+                         class="mt-2.5 ml-1 w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0">
+                  <button @click="selectEmail(email.id)" class="flex-1 min-w-0 text-left flex items-start gap-3 focus-ring">
+                  <!-- 头像 -->
+                  <div class="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-xs font-semibold mt-0.5"
+                       :class="email.unread ? 'bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'"
+                       x-text="(email.from_name || email.from || '?')[0].toUpperCase()">
+                  </div>
+                  <!-- 内容 -->
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="text-sm truncate" :class="email.unread ? 'font-semibold text-gray-900 dark:text-gray-50' : 'text-gray-700 dark:text-gray-300'"
+                            x-text="email.from_name || email.from || '未知'"></span>
+                      <span class="flex items-center gap-1.5 flex-shrink-0">
+                        <!-- 邮箱来源徽章：区分内网 / 外网 / NOC -->
+                        <span x-show="$store.mail.mailboxLabel(email.account)"
+                              class="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium"
+                              :class="($store.mail.mailboxLabel(email.account)||{}).cls"
+                              :title="email.account"
+                              x-text="($store.mail.mailboxLabel(email.account)||{}).name"></span>
+                        <span class="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap" x-text="formatTime(email.date || email.received_at)"></span>
+                      </span>
+                    </div>
+                    <p class="text-sm truncate mt-0.5" :class="email.unread ? 'font-medium text-gray-800 dark:text-gray-200' : 'text-gray-600 dark:text-gray-400'"
+                       x-text="email.subject || '(无主题)'"></p>
+                    <p class="text-xs text-gray-400 dark:text-gray-500 truncate mt-0.5"
+                       x-text="truncate(email.snippet || email.preview || '', 60)"></p>
+                    <div x-show="(email.tags||[]).length" class="flex items-center gap-1 mt-1">
+                      <template x-for="tg in (email.tags||[])" :key="tg">
+                        <span class="w-2 h-2 rounded-full flex-shrink-0" :style="'background:'+$store.mail.tagColor(tg)" :title="tg"></span>
+                      </template>
+                    </div>
+                  </div>
+                  </button>
+                  <!-- 星标（可直接点击切换） -->
+                  <button @click.stop="Alpine.store('mail').toggleStarById(email.id)"
+                          class="flex-shrink-0 mt-1 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition"
+                          :title="email.starred ? '取消星标' : '添加星标'">
+                    <i data-lucide="star" class="w-3.5 h-3.5" :class="email.starred ? 'text-amber-400 fill-amber-400' : 'text-gray-300 dark:text-gray-600 hover:text-amber-300'"></i>
+                  </button>
+                  <button @click.stop="Alpine.store('mail').toggleArchiveById(email.id)"
+                          class="flex-shrink-0 mt-1 p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 transition"
+                          :title="email.archived ? '取消归档' : '归档'">
+                    <i data-lucide="archive" class="w-3.5 h-3.5" :class="email.archived ? 'text-indigo-500' : 'text-gray-300 dark:text-gray-600 hover:text-indigo-400'"></i>
+                  </button>
+                </div>
+              </template>
+
+              <!-- 加载更多（滚动触底自动加载的可靠兜底） -->
+              <div x-show="emails.length > 0 && hasMore" class="px-4 py-3 flex justify-center">
+                <button @click="loadMore()" :disabled="loading"
+                        class="px-4 py-1.5 text-xs font-medium rounded-md border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition">
+                  <span x-show="!loading">加载更多</span>
+                  <span x-show="loading">加载中…</span>
+                </button>
+              </div>
+              <div x-show="emails.length > 0 && !hasMore" class="px-4 py-3 text-center text-xs text-gray-300 dark:text-gray-600">
+                已到底部
+              </div>
+
+              <!-- 空状态 -->
+              <!-- 空态要说清"为什么空"：只写"暂无邮件"的话，
+                   "点了没反应"和"这里确实没有"长得一模一样（用户就这么困惑过）。 -->
+              <div x-show="!loading && emails.length === 0" class="flex flex-col items-center justify-center py-16 px-6 text-gray-400 dark:text-gray-500">
+                <i data-lucide="inbox" class="w-12 h-12 mb-3 opacity-50"></i>
+                <p class="text-sm" x-text="$store.mail.emptyReason"></p>
+                <button x-show="$store.mail.hasNarrowing"
+                        @click="$store.mail.clearNarrowing()"
+                        class="mt-3 px-3 py-1.5 text-xs rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition">
+                  清除筛选，看全部
+                </button>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+
+      <!-- 列表／详情 拖拉调整手柄（双击复位到 340px） -->
+      <div class="pane-resize-handle flex-shrink-0"
+           title="拖动调整列表宽度，双击复位"
+           @mousedown.prevent="$store.ui.startListResize($event)"
+           @dblclick="$store.ui.resetListWidth()">
+      </div>
+
+      <!-- ========== 右侧邮件详情 ========== -->
+      <main class="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-900"
+            x-data="emailDetail">
+
+        <!-- 无邮件选中时 -->
+        <template x-if="!email && !loading">
+          <div class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
+            <i data-lucide="mail-open" class="w-16 h-16 mb-4 opacity-30"></i>
+            <p class="text-sm">选择一封邮件开始阅读</p>
+            <p class="text-xs mt-2 text-gray-300 dark:text-gray-600">
+              <kbd class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">J</kbd> /
+              <kbd class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">K</kbd> 上下导航，
+              <kbd class="px-1 py-0.5 bg-gray-100 dark:bg-gray-800 rounded text-[10px]">Enter</kbd> 打开
+            </p>
+          </div>
+        </template>
+
+        <!-- 加载中 -->
+        <template x-if="loading">
+          <div class="flex-1 p-6 space-y-4">
+            <div class="skeleton h-6 w-2/3 rounded"></div>
+            <div class="skeleton h-4 w-1/3 rounded"></div>
+            <div class="skeleton h-4 w-1/4 rounded"></div>
+            <div class="mt-6 space-y-3">
+              <div class="skeleton h-3 w-full rounded"></div>
+              <div class="skeleton h-3 w-full rounded"></div>
+              <div class="skeleton h-3 w-5/6 rounded"></div>
+              <div class="skeleton h-3 w-4/6 rounded"></div>
+            </div>
+          </div>
+        </template>
+
+        <!-- 邮件内容 -->
+        <template x-if="email && !loading">
+          <div class="flex-1 flex flex-col overflow-hidden">
+
+            <!-- AI 摘要卡片 -->
+            <div x-show="summary || summaryLoading" class="mx-4 mt-4 p-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 flex-shrink-0">
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-2">
+                  <i data-lucide="sparkles" class="w-4 h-4 text-indigo-600 dark:text-indigo-400"></i>
+                  <span class="text-xs font-semibold text-indigo-700 dark:text-indigo-300">AI 摘要</span>
+                </div>
+                <button @click="toggleSummary()" class="text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300">
+                  <i data-lucide="chevron-up" class="w-4 h-4 transition-transform" :class="summaryCollapsed && 'rotate-180'"></i>
+                </button>
+              </div>
+              <div x-show="!summaryCollapsed" x-transition.opacity.duration.150ms>
+                <div class="text-sm text-indigo-900 dark:text-indigo-200 leading-relaxed" style="white-space: pre-wrap;"
+                   :class="summaryLoading && 'ai-cursor'"
+                   x-text="summaryDisplay || '正在生成摘要...'"></div>
+              </div>
+            </div>
+
+            <!-- 邮件头 -->
+            <div class="px-6 pt-4 pb-3 flex-shrink-0">
+              <h1 class="text-lg font-semibold text-gray-900 dark:text-gray-50 leading-tight" x-text="email.subject || '(无主题)'"></h1>
+              <div class="mt-3 flex items-start gap-3">
+                <div class="w-10 h-10 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center text-sm font-semibold text-indigo-700 dark:text-indigo-300 flex-shrink-0"
+                     x-text="(email.from_name || email.from || '?')[0].toUpperCase()">
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2">
+                    <span class="font-medium text-sm text-gray-900 dark:text-gray-100" x-text="email.from_name || email.from"></span>
+                    <span class="text-xs text-gray-400" x-text="email.from_addr || ''"></span>
+                  </div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    <template x-if="hasRecipientInfo">
+                      <button type="button" @click="toggleRecipients()"
+                              :aria-expanded="recipientsOpen ? 'true' : 'false'"
+                              aria-label="展开收件人与抄送明细"
+                              class="inline-flex items-center gap-1 rounded hover:text-gray-700 dark:hover:text-gray-200 focus:outline-none focus:ring-1 focus:ring-indigo-400 transition">
+                        <span>发给 <span x-text="recipientSummary"></span></span>
+                        <span class="text-[10px] leading-none transition-transform"
+                              :class="recipientsOpen ? 'rotate-180 inline-block' : 'inline-block'">▾</span>
+                      </button>
+                    </template>
+                    <template x-if="!hasRecipientInfo">
+                      <span class="text-gray-400 dark:text-gray-500">收件人未记录</span>
+                    </template>
+                    <span class="ml-3" x-text="formatDate(email.date || email.received_at)"></span>
+                  </div>
+                  <!-- 收件人/抄送明细（折叠展开） -->
+                  <div x-show="recipientsOpen && hasRecipientInfo" x-cloak
+                       class="mt-2 rounded-md bg-gray-50 dark:bg-gray-800/60 px-3 py-2 space-y-1 text-xs text-gray-600 dark:text-gray-300">
+                    <div class="flex gap-2" x-show="toList.length">
+                      <span class="w-10 flex-shrink-0 text-gray-400">收件人</span>
+                      <span class="flex-1 break-all">
+                        <template x-for="(a, i) in toList" :key="'to-' + i">
+                          <span><span x-text="displayAddr(a)" :title="a.email"></span><span
+                                x-show="i < toList.length - 1">、</span></span>
+                        </template>
+                      </span>
+                    </div>
+                    <div class="flex gap-2" x-show="ccList.length">
+                      <span class="w-10 flex-shrink-0 text-gray-400">抄送</span>
+                      <span class="flex-1 break-all">
+                        <template x-for="(a, i) in ccList" :key="'cc-' + i">
+                          <span><span x-text="displayAddr(a)" :title="a.email"></span><span
+                                x-show="i < ccList.length - 1">、</span></span>
+                        </template>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 操作栏 -->
+            <div class="px-6 py-2 flex items-center gap-1 border-t border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
+              <button @click="reply()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition" title="回复 (R)">
+                <i data-lucide="reply" class="w-3.5 h-3.5"></i> 回复
+              </button>
+              <button @click="replyAll()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition" title="回复全部 (A)">
+                <i data-lucide="reply-all" class="w-3.5 h-3.5"></i> 回复全部
+              </button>
+              <button @click="forward()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition" title="转发">
+                <i data-lucide="forward" class="w-3.5 h-3.5"></i> 转发
+              </button>
+              <button @click="extractTodos()" :disabled="todoExtracting" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 transition disabled:opacity-50" title="AI 从此邮件提取待办">
+                <i data-lucide="list-checks" class="w-3.5 h-3.5"></i> <span x-show="!todoExtracting">AI待办</span><span x-show="todoExtracting">提取中…</span>
+              </button>
+              <button @click="toggleStar()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition" title="星标 (S)">
+                <i data-lucide="star" class="w-3.5 h-3.5"></i> 星标
+              </button>
+              <button @click="toggleUnread()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition" title="标记未读/已读 (U)">
+                <i data-lucide="mail" class="w-3.5 h-3.5"></i>
+                <span x-text="email && email.unread ? '标记已读' : '标记未读'"></span>
+              </button>
+              <div class="flex-1"></div>
+              <button @click="deleteEmail()" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition" title="删除 (E)">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> 删除
+              </button>
+            </div>
+
+            <!-- 附件区：内容不在库里（只存了文件名），点一下才回服务器取，
+                 取到后后端会缓存，第二次就是本地读盘 -->
+            <div x-show="attachmentList.length" style="display:none"
+                 class="px-6 pt-3 pb-1 flex-shrink-0">
+              <div class="flex items-center gap-1.5 mb-2 text-xs font-medium text-gray-500">
+                <i data-lucide="paperclip" class="w-3.5 h-3.5"></i>
+                <span x-text="'附件（' + attachmentList.length + '）'"></span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <template x-for="n in attachmentList" :key="n">
+                  <button type="button" @click="downloadAttachment(n)"
+                          :disabled="downloading === n"
+                          class="flex items-center gap-2 max-w-[300px] px-2.5 py-1.5 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 hover:bg-gray-50 dark:hover:bg-gray-700/60 transition text-left disabled:opacity-60">
+                    <i :data-lucide="attachmentIcon(n)" class="w-4 h-4 flex-shrink-0 text-gray-400"></i>
+                    <span class="text-xs text-gray-700 dark:text-gray-200 truncate" x-text="n"></span>
+                    <i x-show="downloading !== n" data-lucide="download" class="w-3.5 h-3.5 flex-shrink-0 text-gray-400"></i>
+                    <span x-show="downloading === n" class="text-[10px] text-gray-400 flex-shrink-0">取回中…</span>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <!-- SANITIZE-HARDEN-20260930 外部图片默认拦截（追踪像素会向发件人回报已读与 IP）；可按封显示或信任发件人域名 -->
+<div x-show="remoteBlocked > 0" data-testid="remote-img-banner" style="display:none;margin:12px 24px 0;padding:6px 12px;border-radius:6px;background:#fffbeb;color:#92400e;font-size:12px;flex-shrink:0">
+<span x-text="'已拦截 ' + remoteBlocked + ' 处外部图片（防追踪）'"></span>
+<button type="button" @click="loadRemoteImages()" data-testid="remote-img-show" style="margin-left:12px;text-decoration:underline">显示图片</button>
+<button type="button" x-show="senderDomain" @click="trustSenderDomain()" data-testid="remote-img-trust" style="margin-left:12px;text-decoration:underline" x-text="'始终显示来自 ' + senderDomain + ' 的图片'"></button>
+</div>
+<!-- 正文区域 -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar px-6 py-4">
+              <div class="email-body prose prose-sm dark:prose-invert max-w-none text-gray-700 dark:text-gray-300 leading-relaxed"
+                   :class="isHtml ? '' : 'whitespace-pre-wrap'"
+                   x-html="sanitizedBody">
+              </div>
+            </div>
+          </div>
+        </template>
+      </main>
+
+      <!-- ========== AI 助手（呼出式浮层：x-show 切换 display，收回可靠；fixed 不挤占布局） ========== -->
+      <div x-show="$store.ui.aiPanelOpen"
+           style="top:48px; bottom:0; width:min(460px, 92vw);"
+           class="fixed right-0 z-40 flex flex-col border-l border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 shadow-2xl overflow-hidden"
+           x-data="aiChat"
+           @click.outside="$store.ui.aiPanelOpen && close()">
+
+    <!-- 面板头 -->
+    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+      <div class="flex items-center gap-2">
+        <i data-lucide="sparkles" class="w-5 h-5 text-indigo-600 dark:text-indigo-400"></i>
+        <h2 class="font-semibold text-sm">AI 助手</h2>
+      </div>
+      <div class="flex items-center gap-1">
+        <button @click="exportChat()" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400" title="导出对话">
+          <i data-lucide="download" class="w-4 h-4"></i>
+        </button>
+        <button @click="clear()" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400" title="清除对话">
+          <i data-lucide="trash" class="w-4 h-4"></i>
+        </button>
+        <button @click="close()" class="p-1.5 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400" title="关闭 (Esc)">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- 模式切换 -->
+    <div class="px-4 py-2 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
+      <div class="flex items-center gap-1">
+        <button @click="setMode('global')"
+                :class="mode === 'global' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                class="px-2.5 py-1 text-xs font-medium rounded-md transition">全局对话</button>
+        <button @click="setMode('email')"
+                :disabled="!hasEmail"
+                :title="hasEmail ? '' : '请先选择一封邮件'"
+                :class="mode === 'email' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed'"
+                class="px-2.5 py-1 text-xs font-medium rounded-md transition">当前邮件</button>
+      </div>
+      <!-- 实时上下文指示 -->
+      <div class="mt-1.5 flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500 min-w-0">
+        <span class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+              :class="mode === 'email' ? 'bg-indigo-500' : 'bg-emerald-500'"></span>
+        <span class="truncate" x-text="contextLabel"></span>
+      </div>
+    </div>
+
+    <!-- 聊天消息列表 -->
+    <div class="flex-1 overflow-y-auto custom-scrollbar px-4 py-3 space-y-3" x-ref="chatScroll"
+         x-effect="scrollTick; messages.length; $nextTick(() => { $el.scrollTop = $el.scrollHeight; })">
+      <!-- 空状态 -->
+      <div x-show="messages.length === 0" class="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-500">
+        <i data-lucide="message-circle" class="w-10 h-10 mb-2 opacity-40"></i>
+        <p class="text-xs">开始与AI对话</p>
+        <p class="text-xs mt-1 text-gray-300 dark:text-gray-600">可以询问邮件内容、生成回复等</p>
+      </div>
+
+      <!-- 消息 -->
+      <template x-for="(msg, idx) in messages" :key="idx">
+        <div :class="msg.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+          <div :class="msg.role === 'user'
+                  ? 'bg-indigo-600 text-white rounded-2xl rounded-br-md px-3.5 py-2 max-w-[85%]'
+                  : 'bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-2xl rounded-bl-md px-3.5 py-2 max-w-[85%]'">
+            <p class="text-sm whitespace-pre-wrap leading-relaxed"
+               :class="msg.streaming && 'ai-cursor'"
+               x-text="msg.content"></p>
+            <p class="text-[10px] mt-1 opacity-50" x-text="msg.time"></p>
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 输入区 -->
+    <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+      <div class="flex items-end gap-2">
+        <textarea x-model="input"
+                  @keydown.enter.prevent="if(!$event.shiftKey) send()"
+                  placeholder="输入消息... (Enter发送, Shift+Enter换行)"
+                  rows="2"
+                  class="flex-1 resize-none rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand dark:focus:border-brand-dark transition"></textarea>
+        <button x-show="!loading" @click="send()"
+                :disabled="!input.trim()"
+                class="p-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white transition flex-shrink-0"
+                title="发送 (Enter)">
+          <i data-lucide="send" class="w-4 h-4"></i>
+        </button>
+        <button x-show="loading" @click="cancel()"
+                class="p-2.5 rounded-lg bg-red-500 hover:bg-red-600 text-white transition flex-shrink-0"
+                title="停止生成">
+          <i data-lucide="square" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+      </div><!-- end AI 助手常驻右栏 -->
+
+    </div><!-- end main 3-column layout -->
+  </div><!-- end flex-col h-full -->
+
+  <!-- ==================== 写邮件弹窗 ==================== -->
+  <div x-show="$store.ui.composeOpen"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 scale-95"
+       x-transition:enter-end="opacity-100 scale-100"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100 scale-100"
+       x-transition:leave-end="opacity-0 scale-95"
+       class="fixed inset-0 z-50 flex items-end justify-center sm:items-center p-4"
+       @keydown.escape.window="$store.ui.composeOpen = false">
+    <!-- Backdrop -->
+    <div class="absolute inset-0 bg-black/30 dark:bg-black/50 cmd-backdrop" @click="$store.ui.composeOpen = false"></div>
+
+    <!-- 弹窗主体 -->
+    <div class="relative w-full bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col transition-all"
+         :class="maximized ? 'max-w-none w-[96vw] h-[95vh]' : 'max-w-4xl h-[88vh]'"
+         x-data="compose">
+      <!-- 头部 -->
+      <div class="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <h3 class="font-semibold text-sm" x-text="mode === 'reply' ? '回复邮件' : mode === 'reply-all' ? '回复全部' : mode === 'forward' ? '转发邮件' : '新邮件'"></h3>
+        <div class="flex items-center gap-1">
+          <button @click="maximized = !maximized" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400" :title="maximized ? '还原' : '最大化'">
+            <i x-show="!maximized" data-lucide="maximize-2" class="w-4 h-4"></i>
+            <i x-show="maximized" data-lucide="minimize-2" class="w-4 h-4"></i>
+          </button>
+          <button @click="close()" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400">
+            <i data-lucide="x" class="w-4 h-4"></i>
+          </button>
+        </div>
+      </div>
+
+      <!-- 表单 -->
+      <div class="flex-1 flex flex-col min-h-0 overflow-hidden px-5 py-3 gap-3">
+        <!-- 发件人：只有一个可发信账户时不显示（永远只有一项的下拉是噪音） -->
+        <div x-show="senders.length > 1" style="display:none"
+             class="flex items-center gap-2 flex-shrink-0">
+          <label class="text-xs font-medium text-gray-500 w-12 flex-shrink-0">发件人</label>
+          <select x-model="fromAccount"
+                  class="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            <template x-for="s in senders" :key="s.account">
+              <option :value="s.account" x-text="s.sender + (s.ready ? '' : '（未配置发信服务器）')"></option>
+            </template>
+          </select>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <label class="text-xs font-medium text-gray-500 w-12 flex-shrink-0">收件人</label>
+          <div class="relative flex-1">
+            <input x-model="to" type="email" placeholder="email@example.com"
+                   @input="acInput('to')" @keydown="acKey($event, 'to')"
+                   @blur="setTimeout(() => acClose(), 150)"
+                   class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            <div x-show="acField === 'to' && acList.length" style="display:none"
+                 class="absolute z-50 left-0 right-0 mt-1 max-h-64 overflow-y-auto custom-scrollbar rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+              <template x-for="(c, i) in acList" :key="c.email">
+                <button type="button" @mousedown.prevent="acPick(c)"
+                        :class="i === acIndex ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''"
+                        class="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 truncate">
+                  <span x-text="acLabel(c)"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <label class="text-xs font-medium text-gray-500 w-12 flex-shrink-0">抄送</label>
+          <div class="relative flex-1">
+            <input x-model="cc" type="text" placeholder="可选"
+                   @input="acInput('cc')" @keydown="acKey($event, 'cc')"
+                   @blur="setTimeout(() => acClose(), 150)"
+                   class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            <div x-show="acField === 'cc' && acList.length" style="display:none"
+                 class="absolute z-50 left-0 right-0 mt-1 max-h-64 overflow-y-auto custom-scrollbar rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+              <template x-for="(c, i) in acList" :key="c.email">
+                <button type="button" @mousedown.prevent="acPick(c)"
+                        :class="i === acIndex ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''"
+                        class="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 truncate">
+                  <span x-text="acLabel(c)"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+          <button type="button" @click="showBcc = !showBcc"
+                  class="flex-shrink-0 px-2 py-1 text-xs rounded-md text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+                  x-text="showBcc ? '收起密送' : '密送'"></button>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0" x-show="showBcc" style="display:none">
+          <label class="text-xs font-medium text-gray-500 w-12 flex-shrink-0">密送</label>
+          <div class="relative flex-1">
+            <input x-model="bcc" type="text" placeholder="多个用 ; 分隔"
+                   @input="acInput('bcc')" @keydown="acKey($event, 'bcc')"
+                   @blur="setTimeout(() => acClose(), 150)"
+                   class="w-full px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            <div x-show="acField === 'bcc' && acList.length" style="display:none"
+                 class="absolute z-50 left-0 right-0 mt-1 max-h-64 overflow-y-auto custom-scrollbar rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-lg">
+              <template x-for="(c, i) in acList" :key="c.email">
+                <button type="button" @mousedown.prevent="acPick(c)"
+                        :class="i === acIndex ? 'bg-indigo-50 dark:bg-indigo-900/30' : ''"
+                        class="w-full text-left px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 truncate">
+                  <span x-text="acLabel(c)"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 flex-shrink-0">
+          <label class="text-xs font-medium text-gray-500 w-12 flex-shrink-0">主题</label>
+          <input x-model="subject" type="text" placeholder="邮件主题"
+                 class="flex-1 px-3 py-1.5 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+        </div>
+        <div class="flex-1 flex flex-col min-h-0">
+          <!-- 富文本工具栏 -->
+          <div class="flex flex-col gap-1 mb-1.5 pb-1.5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0">
+            <div class="flex items-center flex-wrap gap-0.5">
+            <select @mousedown="saveCaret()" @change="setBlock($event.target.value)"
+                    :value="curBlock" class="tb-select" title="段落样式" style="width:84px">
+              <option value="p">正文</option>
+              <option value="h1">标题 1</option>
+              <option value="h2">标题 2</option>
+              <option value="h3">标题 3</option>
+              <option value="blockquote">引用</option>
+              <option value="pre">代码块</option>
+            </select>
+            <select @mousedown="saveCaret()" @change="setFont($event.target.value)" class="tb-select" title="字体" style="width:104px">
+              <option value="">默认</option>
+              <option value="'Microsoft YaHei', 微软雅黑, sans-serif">微软雅黑</option>
+              <option value="SimSun, 宋体, serif">宋体</option>
+              <option value="SimHei, 黑体, sans-serif">黑体</option>
+              <option value="KaiTi, 楷体, serif">楷体</option>
+              <option value="DengXian, 等线, sans-serif">等线</option>
+              <option value="Arial, Helvetica, sans-serif">Arial</option>
+              <option value="Calibri, sans-serif">Calibri</option>
+              <option value="'Times New Roman', Times, serif">Times New Roman</option>
+              <option value="Georgia, serif">Georgia</option>
+              <option value="'Courier New', Courier, monospace">Courier New</option>
+              <option value="Consolas, Monaco, monospace">Consolas</option>
+            </select>
+            <select @mousedown="saveCaret()" @change="setSize($event.target.value)" class="tb-select" title="字号" style="width:60px">
+              <option value="">字号</option>
+              <option value="12">12</option>
+              <option value="13">13</option>
+              <option value="14">14</option>
+              <option value="16">16</option>
+              <option value="18">18</option>
+              <option value="20">20</option>
+              <option value="24">24</option>
+              <option value="28">28</option>
+              <option value="32">32</option>
+              <option value="40">40</option>
+              <option value="48">48</option>
+            </select>
+            <select @mousedown="saveCaret()" @change="setLineHeight($event.target.value)"
+                    class="tb-select" title="行距" style="width:64px">
+              <option value="">行距</option>
+              <option value="1">1.0</option>
+              <option value="1.15">1.15</option>
+              <option value="1.5">1.5</option>
+              <option value="1.75">1.75</option>
+              <option value="2">2.0</option>
+            </select>
+            <span class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></span>
+            <button type="button" @mousedown.prevent="exec('bold'); refreshFmt()" class="tb-btn" :class="fmt['bold'] ? 'tb-btn-on' : ''" title="加粗 (Ctrl+B)"><i data-lucide="bold" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('italic'); refreshFmt()" class="tb-btn" :class="fmt['italic'] ? 'tb-btn-on' : ''" title="斜体 (Ctrl+I)"><i data-lucide="italic" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('underline'); refreshFmt()" class="tb-btn" :class="fmt['underline'] ? 'tb-btn-on' : ''" title="下划线 (Ctrl+U)"><i data-lucide="underline" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('strikeThrough'); refreshFmt()" class="tb-btn" :class="fmt['strikeThrough'] ? 'tb-btn-on' : ''" title="删除线"><i data-lucide="strikethrough" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('superscript'); refreshFmt()" class="tb-btn" :class="fmt['superscript'] ? 'tb-btn-on' : ''" title="上标"><i data-lucide="superscript" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('subscript'); refreshFmt()" class="tb-btn" :class="fmt['subscript'] ? 'tb-btn-on' : ''" title="下标"><i data-lucide="subscript" class="w-3.5 h-3.5"></i></button>
+            <span class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></span>
+            <div class="relative" @click.outside="colorPickerOpen = false">
+              <button type="button" @mousedown="saveCaret()" @click="colorPickerOpen = !colorPickerOpen; hilitePickerOpen = false" class="tb-btn" title="字体颜色"><i data-lucide="baseline" class="w-3.5 h-3.5"></i></button>
+              <div x-show="colorPickerOpen" x-transition style="display:none"
+                   class="absolute left-0 top-full mt-1 z-20 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg w-[188px]">
+                <div class="grid grid-cols-7 gap-1">
+                <button type="button" @mousedown.prevent="setColor('#000000')" title="#000000" class="tb-swatch" style="background:#000000"></button>
+                <button type="button" @mousedown.prevent="setColor('#374151')" title="#374151" class="tb-swatch" style="background:#374151"></button>
+                <button type="button" @mousedown.prevent="setColor('#6B7280')" title="#6B7280" class="tb-swatch" style="background:#6B7280"></button>
+                <button type="button" @mousedown.prevent="setColor('#B91C1C')" title="#B91C1C" class="tb-swatch" style="background:#B91C1C"></button>
+                <button type="button" @mousedown.prevent="setColor('#DC2626')" title="#DC2626" class="tb-swatch" style="background:#DC2626"></button>
+                <button type="button" @mousedown.prevent="setColor('#EA580C')" title="#EA580C" class="tb-swatch" style="background:#EA580C"></button>
+                <button type="button" @mousedown.prevent="setColor('#CA8A04')" title="#CA8A04" class="tb-swatch" style="background:#CA8A04"></button>
+                <button type="button" @mousedown.prevent="setColor('#16A34A')" title="#16A34A" class="tb-swatch" style="background:#16A34A"></button>
+                <button type="button" @mousedown.prevent="setColor('#0D9488')" title="#0D9488" class="tb-swatch" style="background:#0D9488"></button>
+                <button type="button" @mousedown.prevent="setColor('#2563EB')" title="#2563EB" class="tb-swatch" style="background:#2563EB"></button>
+                <button type="button" @mousedown.prevent="setColor('#4F46E5')" title="#4F46E5" class="tb-swatch" style="background:#4F46E5"></button>
+                <button type="button" @mousedown.prevent="setColor('#7C3AED')" title="#7C3AED" class="tb-swatch" style="background:#7C3AED"></button>
+                <button type="button" @mousedown.prevent="setColor('#DB2777')" title="#DB2777" class="tb-swatch" style="background:#DB2777"></button>
+                <button type="button" @mousedown.prevent="setColor('#FFFFFF')" title="#FFFFFF" class="tb-swatch" style="background:#FFFFFF"></button>
+                </div>
+                <label class="mt-2 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">自定义
+                  <input type="color" @mousedown="saveCaret()" @change="setColor($event.target.value)" class="w-6 h-5 p-0 border-0 bg-transparent">
+                </label>
+              </div>
+            </div>
+            <div class="relative" @click.outside="hilitePickerOpen = false">
+              <button type="button" @mousedown="saveCaret()" @click="hilitePickerOpen = !hilitePickerOpen; colorPickerOpen = false" class="tb-btn" title="背景高亮"><i data-lucide="highlighter" class="w-3.5 h-3.5"></i></button>
+              <div x-show="hilitePickerOpen" x-transition style="display:none"
+                   class="absolute left-0 top-full mt-1 z-20 p-2 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg w-[188px]">
+                <div class="grid grid-cols-7 gap-1">
+                <button type="button" @mousedown.prevent="setHilite('#FEF08A')" title="#FEF08A" class="tb-swatch" style="background:#FEF08A"></button>
+                <button type="button" @mousedown.prevent="setHilite('#FDE68A')" title="#FDE68A" class="tb-swatch" style="background:#FDE68A"></button>
+                <button type="button" @mousedown.prevent="setHilite('#BBF7D0')" title="#BBF7D0" class="tb-swatch" style="background:#BBF7D0"></button>
+                <button type="button" @mousedown.prevent="setHilite('#A7F3D0')" title="#A7F3D0" class="tb-swatch" style="background:#A7F3D0"></button>
+                <button type="button" @mousedown.prevent="setHilite('#BFDBFE')" title="#BFDBFE" class="tb-swatch" style="background:#BFDBFE"></button>
+                <button type="button" @mousedown.prevent="setHilite('#DDD6FE')" title="#DDD6FE" class="tb-swatch" style="background:#DDD6FE"></button>
+                <button type="button" @mousedown.prevent="setHilite('#FBCFE8')" title="#FBCFE8" class="tb-swatch" style="background:#FBCFE8"></button>
+                <button type="button" @mousedown.prevent="setHilite('#FECACA')" title="#FECACA" class="tb-swatch" style="background:#FECACA"></button>
+                <button type="button" @mousedown.prevent="setHilite('#E5E7EB')" title="#E5E7EB" class="tb-swatch" style="background:#E5E7EB"></button>
+                <button type="button" @mousedown.prevent="setHilite('transparent')" title="取消高亮" class="tb-swatch grid place-items-center text-[9px] text-gray-500" style="background:repeating-linear-gradient(45deg,#fff,#fff 3px,#e5e7eb 3px,#e5e7eb 6px)">✕</button>
+                </div>
+                <label class="mt-2 flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-gray-400">自定义
+                  <input type="color" @mousedown="saveCaret()" @change="setHilite($event.target.value)" class="w-6 h-5 p-0 border-0 bg-transparent">
+                </label>
+              </div>
+            </div>
+            </div>
+            <div class="flex items-center flex-wrap gap-0.5">
+            <button type="button" @mousedown.prevent="exec('insertUnorderedList'); refreshFmt()" class="tb-btn" :class="fmt['insertUnorderedList'] ? 'tb-btn-on' : ''" title="无序列表"><i data-lucide="list" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('insertOrderedList'); refreshFmt()" class="tb-btn" :class="fmt['insertOrderedList'] ? 'tb-btn-on' : ''" title="有序列表"><i data-lucide="list-ordered" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('outdent'); refreshFmt()" class="tb-btn" title="减少缩进"><i data-lucide="indent-decrease" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('indent'); refreshFmt()" class="tb-btn" title="增加缩进"><i data-lucide="indent-increase" class="w-3.5 h-3.5"></i></button>
+            <span class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></span>
+            <button type="button" @mousedown.prevent="exec('justifyLeft'); refreshFmt()" class="tb-btn" :class="fmt['justifyLeft'] ? 'tb-btn-on' : ''" title="左对齐"><i data-lucide="align-left" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('justifyCenter'); refreshFmt()" class="tb-btn" :class="fmt['justifyCenter'] ? 'tb-btn-on' : ''" title="居中"><i data-lucide="align-center" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('justifyRight'); refreshFmt()" class="tb-btn" :class="fmt['justifyRight'] ? 'tb-btn-on' : ''" title="右对齐"><i data-lucide="align-right" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('justifyFull'); refreshFmt()" class="tb-btn" :class="fmt['justifyFull'] ? 'tb-btn-on' : ''" title="两端对齐"><i data-lucide="align-justify" class="w-3.5 h-3.5"></i></button>
+            <span class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></span>
+            <button type="button" @mousedown.prevent="createLink()" class="tb-btn" title="插入链接"><i data-lucide="link" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('unlink')" class="tb-btn" title="取消链接"><i data-lucide="link-2-off" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="insertQuote()" class="tb-btn" title="引用块"><i data-lucide="quote" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('insertHorizontalRule'); refreshFmt()" class="tb-btn" title="分割线"><i data-lucide="minus" class="w-3.5 h-3.5"></i></button>
+            <div class="relative" @click.outside="tablePickerOpen = false">
+              <button type="button" @mousedown="saveCaret()" @click="tablePickerOpen = !tablePickerOpen" class="tb-btn tb-btn-wide" title="插入/编辑表格"><i data-lucide="table" class="w-3.5 h-3.5"></i><span class="ml-1 text-[11px]">表格</span></button>
+              <div x-show="tablePickerOpen" x-transition style="display:none"
+                   class="absolute left-0 top-full mt-1 z-20 p-2.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg text-xs w-[212px]">
+                <div class="flex items-center gap-1.5">
+                  <input type="number" min="1" max="30" x-model.number="tableRows" class="w-11 px-1 py-0.5 rounded border border-gray-200 dark:border-gray-700 bg-transparent text-center focus:outline-none focus:ring-1 focus:ring-brand/40">
+                  <span class="text-gray-400">行 ×</span>
+                  <input type="number" min="1" max="12" x-model.number="tableCols" class="w-11 px-1 py-0.5 rounded border border-gray-200 dark:border-gray-700 bg-transparent text-center focus:outline-none focus:ring-1 focus:ring-brand/40">
+                  <span class="text-gray-400">列</span>
+                </div>
+                <label class="flex items-center gap-1.5 mt-2 text-gray-600 dark:text-gray-300">
+                  <input type="checkbox" x-model="tablePickerHeader" class="rounded">首行为表头
+                </label>
+                <button type="button" @click="insertTable(tableRows, tableCols, tablePickerHeader)" class="w-full mt-2 px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-700 text-white">插入表格</button>
+                <div class="mt-2.5 pt-2 border-t border-gray-100 dark:border-gray-700">
+                  <p class="text-[10px] text-gray-400 mb-1.5">改已有表格（先把光标放进单元格）</p>
+                  <div class="grid grid-cols-2 gap-1">
+                    <button type="button" @mousedown.prevent="tableAddRow(true)" class="tb-mini">下方插入行</button>
+                    <button type="button" @mousedown.prevent="tableAddRow(false)" class="tb-mini">上方插入行</button>
+                    <button type="button" @mousedown.prevent="tableAddCol(true)" class="tb-mini">右侧插入列</button>
+                    <button type="button" @mousedown.prevent="tableAddCol(false)" class="tb-mini">左侧插入列</button>
+                    <button type="button" @mousedown.prevent="tableDelRow()" class="tb-mini tb-mini-danger">删除本行</button>
+                    <button type="button" @mousedown.prevent="tableDelCol()" class="tb-mini tb-mini-danger">删除本列</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <span class="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1"></span>
+            <button type="button" @mousedown.prevent="exec('removeFormat'); refreshFmt()" class="tb-btn" title="清除格式"><i data-lucide="eraser" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('undo'); refreshFmt()" class="tb-btn" title="撤销 (Ctrl+Z)"><i data-lucide="undo-2" class="w-3.5 h-3.5"></i></button>
+            <button type="button" @mousedown.prevent="exec('redo'); refreshFmt()" class="tb-btn" title="重做 (Ctrl+Y)"><i data-lucide="redo-2" class="w-3.5 h-3.5"></i></button>
+            </div>
+          </div>
+          <!-- 可编辑富文本正文（撑满剩余高度） -->
+          <div x-ref="editor" contenteditable="true"
+               @input="syncBody(); refreshFmt()"
+               @keyup="refreshFmt()"
+               @mouseup="saveCaret(); refreshFmt()"
+               @focus="refreshFmt()"
+               @blur="saveCaret()"
+               data-placeholder="邮件内容..."
+               class="compose-editor flex-1 min-h-0 w-full overflow-y-auto custom-scrollbar px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 leading-relaxed"></div>
+
+          <!-- 附件 -->
+          <div class="mt-2 flex-shrink-0">
+            <input type="file" multiple x-ref="fileInput" class="hidden" @change="onFilesSelected($event)">
+            <button type="button" @click="$refs.fileInput.click()"
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-md border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition">
+              <i data-lucide="paperclip" class="w-3.5 h-3.5"></i> 添加附件
+            </button>
+            <div class="mt-1.5 space-y-1 max-h-24 overflow-y-auto custom-scrollbar">
+              <template x-for="(att, i) in attachments" :key="i">
+                <div class="flex items-center gap-2 text-xs px-2 py-1 rounded bg-gray-50 dark:bg-gray-800">
+                  <i data-lucide="file" class="w-3.5 h-3.5 text-gray-400 flex-shrink-0"></i>
+                  <span class="flex-1 truncate" x-text="att.name"></span>
+                  <span class="text-gray-400 flex-shrink-0" x-text="att.uploading ? '上传中…' : humanSize(att.size)"></span>
+                  <button type="button" @click="removeAttachment(i)" class="text-gray-400 hover:text-red-500 flex-shrink-0"><i data-lucide="x" class="w-3 h-3"></i></button>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 底部操作 -->
+      <div class="flex items-center justify-between px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <div class="flex items-center gap-1">
+          <span class="text-xs text-gray-400 mr-2">AI草稿:</span>
+          <button @click="generateDraft('professional')" class="px-2 py-1 text-xs rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 transition">专业</button>
+          <button @click="generateDraft('friendly')" class="px-2 py-1 text-xs rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 transition">友好</button>
+          <button @click="generateDraft('brief')" class="px-2 py-1 text-xs rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 transition">简洁</button>
+        </div>
+        <div class="flex items-center gap-2">
+          <button @click="close()" class="px-4 py-1.5 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition">取消</button>
+          <button @click="saveDraft()"
+                  :disabled="savingDraft"
+                  class="px-4 py-1.5 text-sm rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 disabled:opacity-50 transition">
+            <span x-show="!savingDraft">存草稿</span>
+            <span x-show="savingDraft">保存中...</span>
+          </button>
+          <button @click="send()"
+                  :disabled="sending"
+                  class="px-4 py-1.5 text-sm rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50 transition">
+            <span x-show="!sending">发送</span>
+            <span x-show="sending">发送中...</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ==================== 设置面板 ==================== -->
+  <div x-show="$store.ui.settingsOpen"
+       x-transition:enter="transition ease-out duration-200"
+       x-transition:enter-start="opacity-0 scale-95"
+       x-transition:enter-end="opacity-100 scale-100"
+       x-transition:leave="transition ease-in duration-150"
+       x-transition:leave-start="opacity-100 scale-100"
+       x-transition:leave-end="opacity-0 scale-95"
+       class="fixed inset-0 z-50 flex items-center justify-center p-4"
+       @keydown.escape.window="$store.ui.settingsOpen = false">
+    <!-- Backdrop -->
+    <div class="absolute inset-0 bg-black/30 dark:bg-black/50 cmd-backdrop" @click="$store.ui.settingsOpen = false"></div>
+
+    <!-- 设置面板 -->
+    <div class="relative w-full max-w-4xl bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col h-[85vh]"
+         x-data="settingsPanel">
+      <!-- 头部 -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <h3 class="text-base font-semibold">设置</h3>
+        <button @click="close()" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- 主体：左侧分类导航 + 右侧内容 -->
+      <div class="flex-1 flex min-h-0">
+        <nav class="w-48 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 p-3 space-y-1 overflow-y-auto custom-scrollbar bg-gray-50 dark:bg-gray-900/40">
+          <button type="button" @click="tab='model'" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left" :class="tab==='model' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"><i data-lucide="cpu" class="w-4 h-4"></i> AI 模型</button>
+          <button type="button" @click="tab='prompts'" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left" :class="tab==='prompts' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"><i data-lucide="sparkles" class="w-4 h-4"></i> AI 提示词</button>
+          <button type="button" @click="tab='rules'" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left" :class="tab==='rules' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"><i data-lucide="filter" class="w-4 h-4"></i> 邮件类型规则</button>
+          <button type="button" @click="tab='sync'" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left" :class="tab==='sync' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"><i data-lucide="refresh-cw" class="w-4 h-4"></i> 同步</button>
+          <button type="button" @click="tab='prefs'" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left" :class="tab==='prefs' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"><i data-lucide="sliders" class="w-4 h-4"></i> 偏好</button>
+          <button type="button" @click="tab='mailbox'; loadMb()" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left" :class="tab==='mailbox' ? 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 font-medium' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"><i data-lucide="at-sign" class="w-4 h-4"></i> 邮箱标签</button>
+          <button type="button" @click="$store.ui.helpOpen = true" class="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md transition text-left text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"><i data-lucide="help-circle" class="w-4 h-4"></i> 帮助</button>
+        </nav>
+
+        <div class="flex-1 overflow-y-auto px-8 py-6 custom-scrollbar">
+
+          <!-- AI 模型 -->
+          <div x-show="tab==='model'" class="max-w-2xl space-y-4">
+            <div>
+              <h4 class="text-base font-semibold text-gray-800 dark:text-gray-200">AI 模型</h4>
+              <p class="text-xs text-gray-400 mt-1">选择推理后端；内网 API 走自建网关，数据不出公司。</p>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">AI 提供商</label>
+              <select x-model="settings.llm_provider" @change="updateField('llm_provider', $event.target.value)"
+                      class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="ollama">Ollama (本地)</option>
+                <option value="api">内网 API</option>
+              </select>
+            </div>
+            <div x-show="settings.llm_provider === 'ollama'">
+              <label class="text-xs font-medium text-gray-500 mb-1 block">Ollama 地址</label>
+                <input x-model="settings.ollama_url" @input="updateField('ollama_url', $event.target.value)" type="url" placeholder="http://127.0.0.1:11434" class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            </div>
+            <div x-show="settings.llm_provider === 'ollama'">
+              <label class="text-xs font-medium text-gray-500 mb-1 block">Ollama 模型</label>
+                <input x-model="settings.ollama_model" @input="updateField('ollama_model', $event.target.value)" type="text" placeholder="qwen2.5:7b" class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            </div>
+            <div x-show="settings.llm_provider === 'api'">
+              <label class="text-xs font-medium text-gray-500 mb-1 block">API 地址</label>
+                <input x-model="settings.api_base_url" @input="updateField('api_base_url', $event.target.value)" type="url" placeholder="http://your-internal-llm/v1" class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            </div>
+            <div x-show="settings.llm_provider === 'api'">
+              <label class="text-xs font-medium text-gray-500 mb-1 block">API Key</label>
+                <input x-model="settings.api_key" @input="updateField('api_key', $event.target.value)" type="password" placeholder="如需要则填写" class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            </div>
+            <div x-show="settings.llm_provider === 'api'">
+              <label class="text-xs font-medium text-gray-500 mb-1 block">API 模型</label>
+                <input x-model="settings.api_model" @input="updateField('api_model', $event.target.value)" type="text" placeholder="qwen2.5-72b" class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            </div>
+            <div class="flex items-center gap-3 pt-1">
+              <button @click="testAI()" :disabled="testLoading"
+                      class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition disabled:opacity-50">
+                <span x-show="!testLoading">测试连接</span>
+                <span x-show="testLoading">测试中...</span>
+              </button>
+              <span x-show="testResult" class="text-xs"
+                    :class="testResult?.success ? 'text-green-600 dark:text-green-400' : 'text-red-500'"
+                    x-text="testResult?.message"></span>
+            </div>
+          </div>
+
+          <!-- AI 提示词 -->
+          <div x-show="tab==='prompts'" class="max-w-2xl space-y-4">
+            <div>
+              <h4 class="text-base font-semibold text-gray-800 dark:text-gray-200">AI 提示词（Prompt）</h4>
+              <p class="text-xs text-gray-400 mt-1">留空则使用系统内置强化版。占位符：摘要/草稿可用 {subject} {body}，草稿另可用 {tone}。</p>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">邮件摘要 Prompt</label>
+              <textarea x-model="settings.prompt_summary" @input="updateField('prompt_summary', $event.target.value)"
+                        rows="5" placeholder="留空=内置强化版；占位符 {subject} {body}"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">草稿回复 Prompt</label>
+              <textarea x-model="settings.prompt_draft" @input="updateField('prompt_draft', $event.target.value)"
+                        rows="5" placeholder="留空=内置强化版；占位符 {subject} {body} {tone}"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">AI 助手 系统 Prompt</label>
+              <textarea x-model="settings.prompt_chat" @input="updateField('prompt_chat', $event.target.value)"
+                        rows="5" placeholder="留空=内置强化版；定义助手的人设/风格"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">文件夹简报 Prompt（topic_digest）</label>
+              <textarea x-model="settings.prompt_topic_digest" @input="updateField('prompt_topic_digest', $event.target.value)"
+                        rows="4" placeholder="留空=内置默认；邮件清单由系统自动附在末尾，这里只写分析要求"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">话题·自然语言解析 Prompt（topic_nl）</label>
+              <textarea x-model="settings.prompt_topic_nl" @input="updateField('prompt_topic_nl', $event.target.value)"
+                        rows="3" placeholder="留空=内置默认；仅改首句说明，JSON 格式/字段由系统固定（勿要求改格式，否则解析会失败）"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">待办提取 Prompt（todo_extract）</label>
+              <textarea x-model="settings.prompt_todo_extract" @input="updateField('prompt_todo_extract', $event.target.value)"
+                        rows="3" placeholder="留空=内置默认；JSON 格式与邮件内容由系统固定，这里只写提取侧重"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">规则生成 Prompt（rule_gen）</label>
+              <textarea x-model="settings.prompt_rule_gen" @input="updateField('prompt_rule_gen', $event.target.value)"
+                        rows="3" placeholder="留空=内置默认；仅改首段说明，JSON schema/示例由系统固定"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+            </div>
+          </div>
+
+          <!-- 邮件类型规则 -->
+          <!-- 邮件规则 -->
+          <div x-show="tab==='rules'" class="max-w-3xl">
+            <div class="flex items-start justify-between mb-3">
+              <div>
+                <h4 class="text-base font-semibold text-gray-800 dark:text-gray-200">邮件规则</h4>
+                <p class="text-xs text-gray-400 mt-1">类似 Outlook/Foxmail：设定条件（字段+运算符+值，可加 AI 语义条件），命中后执行动作或使用专用 AI 提示词。按顺序匹配、首个命中生效。<br><span class="text-amber-600 dark:text-amber-400">注意：「移动到文件夹」只改 Quillbox 内的归类，不会移动邮箱服务器上的邮件——在 Outlook / 手机上它们仍在原文件夹。</span></p>
+              </div>
+              <div class="flex-shrink-0 flex items-center gap-2">
+                <button type="button" @click="importOutlook()"
+                        class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition" title="读取本机 Outlook 收件规则并导入">从 Outlook 导入</button>
+                <button type="button" @click="addRule()"
+                        class="px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 hover:bg-indigo-700 text-white transition">+ 添加规则</button>
+                <button type="button" @click="runRules()" title="保存规则并立即应用到已有邮件"
+                        class="px-3 py-1.5 text-xs font-medium rounded-md bg-emerald-600 hover:bg-emerald-700 text-white transition">▶ 应用到现有</button>
+              </div>
+            </div>
+            <div class="rounded-lg border border-indigo-200 dark:border-indigo-800 p-3 mb-4 bg-indigo-50/40 dark:bg-indigo-900/10">
+              <div class="text-xs font-medium text-indigo-600 dark:text-indigo-300 mb-2 flex items-center gap-1"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i> AI 助手</div>
+              <textarea x-model="genText" rows="2" placeholder="用一句话描述规则，如：把发件人含 noc@ 且与告警相关的邮件分类为重要行动并加星标"
+                        class="w-full px-3 py-2 text-xs rounded-md border border-indigo-200 dark:border-indigo-800 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></textarea>
+              <div class="flex flex-wrap items-center gap-2 mt-2">
+                <button type="button" @click="generateRuleFromText()" :disabled="genLoading"
+                        class="px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-50">
+                  <span x-show="!genLoading">✨ 生成规则</span><span x-show="genLoading">生成中...</span>
+                </button>
+                <div class="ml-auto flex items-center gap-2" x-show="rulesUI && rulesUI.length">
+                  <select x-model.number="evalTarget"
+                          class="px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                    <template x-for="(r, idx) in rulesUI" :key="idx">
+                      <option :value="idx" x-text="r.name || ('规则 ' + (idx + 1))"></option>
+                    </template>
+                  </select>
+                  <button type="button" @click="evaluateSelected()" :disabled="evalLoading"
+                          class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 transition disabled:opacity-50">
+                    <span x-show="!evalLoading">🔍 评估选中规则</span><span x-show="evalLoading">评估中...</span>
+                  </button>
+                </div>
+              </div>
+              <div x-show="evalResult" class="mt-2 p-2 text-xs rounded-md bg-white/60 dark:bg-gray-800/40 text-gray-600 dark:text-gray-300" style="white-space: pre-wrap;" x-text="evalResult"></div>
+            </div>
+            <template x-if="!rulesUI || rulesUI.length === 0">
+              <p class="text-sm text-gray-400 py-6 text-center">暂无规则，点击右上角“+ 添加规则”创建。</p>
+            </template>
+            <template x-for="(rule, i) in rulesUI" :key="i">
+              <div class="rounded-lg border border-gray-200 dark:border-gray-700 mb-2">
+                <div class="flex items-center gap-2 px-3 py-2" :class="rule.enabled===false ? 'opacity-50' : ''">
+                  <input type="checkbox" :checked="rule.enabled!==false" @change="rule.enabled = $event.target.checked" @click.stop title="启用/停用该规则" class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0">
+                  <div class="flex items-center gap-2 flex-1 min-w-0 cursor-default" @click="openRuleIndex = (openRuleIndex===i ? -1 : i)">
+                    <i data-lucide="chevron-right" class="w-3.5 h-3.5 flex-shrink-0 text-gray-400 transition-transform" :class="openRuleIndex===i && 'rotate-90'"></i>
+                    <span class="text-sm font-medium truncate flex-shrink-0" style="max-width:34%" x-text="rule.name || '未命名规则'"></span>
+                    <span class="text-xs text-gray-400 truncate flex-1" x-text="ruleSummary(rule)"></span>
+                  </div>
+                  <button type="button" @click.stop="moveRule(i,-1)" :disabled="i===0" class="p-1 text-gray-400 hover:text-indigo-600 disabled:opacity-30 flex-shrink-0" title="上移(优先级更高)"><i data-lucide="chevron-up" class="w-4 h-4"></i></button>
+                  <button type="button" @click.stop="moveRule(i,1)" :disabled="i===(rulesUI.length-1)" class="p-1 text-gray-400 hover:text-indigo-600 disabled:opacity-30 flex-shrink-0" title="下移(优先级更低)"><i data-lucide="chevron-down" class="w-4 h-4"></i></button>
+                  <button type="button" @click.stop="removeRule(i)" class="px-2 py-1 text-xs rounded-md hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 transition flex-shrink-0">删除</button>
+                </div>
+                <div x-show="openRuleIndex===i" x-transition.opacity.duration.150ms class="px-4 pb-4 pt-2 space-y-3 border-t border-gray-100 dark:border-gray-800">
+                  <div class="flex items-center gap-2">
+                    <input x-model="rule.name" type="text" placeholder="规则名称（如：机房告警）"
+                           class="flex-1 px-3 py-2 text-sm font-medium rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  </div>
+                <div class="rounded-md bg-gray-50 dark:bg-gray-800/40 p-3 space-y-2">
+                  <div class="flex items-center gap-2 text-xs text-gray-500">
+                    <span>当满足</span>
+                    <select x-model="rule.matchMode" class="px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                      <option value="all">全部条件（AND）</option>
+                      <option value="any">任一条件（OR）</option>
+                    </select>
+                    <button type="button" @click="addCondition(i)" class="ml-auto px-2 py-1 text-xs rounded-md bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600">+ 条件</button>
+                  </div>
+                  <template x-for="(c, ci) in rule.conditions" :key="ci">
+                    <div class="flex items-center gap-2">
+                      <select x-model="c.field" class="px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                        <option value="subject">主题</option>
+                        <option value="from">发件人</option>
+                        <option value="to">收件人</option>
+                        <option value="body">正文</option>
+                        <option value="subject_or_body">主题或正文</option>
+                        <option value="account">账户</option>
+                        <option value="folder">文件夹</option>
+                        <option value="has_attachment">有附件</option>
+                      </select>
+                      <select x-model="c.op" class="px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                        <option value="contains">包含</option>
+                        <option value="not_contains">不包含</option>
+                        <option value="is">等于</option>
+                        <option value="not_is">不等于</option>
+                        <option value="starts_with">开头是</option>
+                        <option value="ends_with">结尾是</option>
+                        <option value="pattern_is">同类主题</option>
+                      </select>
+                      <input x-model="c.value" type="text" placeholder="值（有附件填 是/否）"
+                             class="flex-1 px-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                      <button type="button" @click="removeCondition(i, ci)" class="px-2 py-1 text-gray-400 hover:text-red-500">✕</button>
+                    </div>
+                  </template>
+                  <div class="pt-1">
+                    <label class="text-xs font-medium text-indigo-500 mb-1 flex items-center gap-1"><i data-lucide="sparkles" class="w-3.5 h-3.5"></i> AI 语义条件（可选 · 每封邮件都会调用 AI 判断，酌情使用；作为一条条件参与 AND/OR）</label>
+                    <textarea x-model="rule.aiMatch" rows="2" placeholder="用自然语言描述这类邮件，如：与服务器/机房/UPS 告警相关的邮件"
+                              class="w-full px-3 py-2 text-xs rounded-md border border-indigo-200 dark:border-indigo-800 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></textarea>
+                  </div>
+                </div>
+                <div class="rounded-md bg-gray-50 dark:bg-gray-800/40 p-3 space-y-2">
+                  <div class="text-xs text-gray-500">命中后执行：</div>
+                  <div class="flex flex-wrap items-center gap-4">
+                    <label class="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300">分类为
+                      <select x-model="rule.actCategory" class="px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                        <option value="">（不改）</option>
+                        <option value="🚨重要行动">🚨重要行动</option>
+                        <option value="📢内部通知">📢内部通知</option>
+                        <option value="📰订阅">📰订阅</option>
+                      </select>
+                    </label>
+                    <label class="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300"><input type="checkbox" x-model="rule.actStar" class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 加星标</label>
+                    <label class="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300"><input type="checkbox" x-model="rule.actMarkRead" class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 标记已读</label>
+                    <label class="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300"><input type="checkbox" x-model="rule.actSkipAi" class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 跳过AI摘要</label>
+                    <label class="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300"
+                             title="只改 Quillbox 内的归类，不会移动邮箱服务器上的邮件。在 Outlook / 手机 / OWA 里，这些邮件仍在原文件夹。">移动到
+                        <span class="text-[10px] px-1 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 font-normal">仅 Quillbox 内</span>
+                      <select x-model="rule.actFolder" class="px-2 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30" style="width:150px">
+                        <option value="">（不移动）</option>
+                        <template x-for="f in $store.mail.allFolderNames()" :key="f"><option :value="f" x-text="f"></option></template>
+                      </select>
+                    </label>
+                  </div>
+                  <textarea x-model="rule.summary" rows="2" placeholder="专用【摘要】Prompt（留空用默认；占位符 {subject} {body} {history}）"
+                            class="w-full px-3 py-2 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+                  <textarea x-model="rule.draft" rows="2" placeholder="专用【回复】Prompt（留空用默认；占位符 {subject} {body} {tone}）"
+                            class="w-full px-3 py-2 text-xs rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30 font-mono"></textarea>
+                </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+
+          <div x-show="tab==='sync'" class="max-w-2xl space-y-4">
+            <div>
+              <h4 class="text-base font-semibold text-gray-800 dark:text-gray-200">同步</h4>
+              <p class="text-xs text-gray-400 mt-1">后台增量同步 Outlook 邮件的频率。</p>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">同步间隔 (分钟)</label>
+              <input x-model.number="settings.sync_interval" @input="updateField('sync_interval', Number($event.target.value))"
+                     type="number" min="1" max="60"
+                     class="w-32 px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            </div>
+          </div>
+
+          <!-- 偏好 -->
+          <!-- 邮箱标签：区分内网 / 外网 / 公共邮箱，规则自定义 -->
+          <div x-show="tab==='mailbox'" class="max-w-3xl space-y-3" x-init="loadMb()">
+            <p class="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
+              给每个邮箱打来源标签，邮件列表会显示彩色徽章，筛选栏也会出现对应按钮。<br>
+              「精确账户」适合公共邮箱（如告警邮箱）；「域名后缀」适合整域一次配好（如内网、外网），
+              以后同域新增账户会自动带上标签。同一封邮件先按账户匹配，再按域名匹配。
+            </p>
+            <template x-for="(r, i) in mbRules" :key="'mbr_'+i">
+              <div class="p-3 rounded-lg border border-gray-200 dark:border-gray-700 space-y-2">
+                <div class="flex items-center gap-2">
+                  <input x-model="r.name" placeholder="标签名（如 内网 / 外网 / NOC）" maxlength="12"
+                         class="w-44 px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                  <select x-model="r.color" class="px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none">
+                    <template x-for="(cn, ck) in mbPalette" :key="'c_'+ck">
+                      <option :value="ck" x-text="cn"></option>
+                    </template>
+                  </select>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                        :class="$store.mail.mailboxColorClass(r.color)" x-text="r.name || '预览'"></span>
+                  <button @click="delMbRule(i)" class="ml-auto px-2 py-1 text-xs rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30">删除</button>
+                </div>
+                <label class="block text-xs text-gray-500 dark:text-gray-400">精确账户（多个用逗号分隔）
+                  <input x-model="r.accountsText" placeholder="noc@example.com, ops@example.com"
+                         class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                </label>
+                <label class="block text-xs text-gray-500 dark:text-gray-400">域名后缀（多个用逗号分隔，不用写 @）
+                  <input x-model="r.domainsText" placeholder="corp.example, example.com"
+                         class="mt-1 w-full px-2 py-1.5 text-sm rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                </label>
+              </div>
+            </template>
+            <div x-show="!mbRules.length" class="text-xs text-gray-400 py-4">还没有标签，点下面「新增标签」。</div>
+            <div x-show="mbErrors.length" class="p-2 rounded bg-red-50 dark:bg-red-900/20 text-xs text-red-600 dark:text-red-300 space-y-0.5">
+              <template x-for="e in mbErrors" :key="e"><div x-text="e"></div></template>
+            </div>
+            <div class="flex items-center gap-2 pt-1">
+              <button @click="addMbRule()" class="px-3 py-1.5 text-xs rounded-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800">+ 新增标签</button>
+              <button @click="saveMb()" :disabled="mbSaving" class="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50">
+                <span x-show="!mbSaving">保存</span><span x-show="mbSaving">保存中…</span>
+              </button>
+              <span x-show="mbSaved" class="text-xs text-emerald-600 dark:text-emerald-400">已保存，列表已刷新</span>
+            </div>
+          </div>
+
+          <div x-show="tab==='prefs'" class="max-w-2xl space-y-4">
+            <div>
+              <h4 class="text-base font-semibold text-gray-800 dark:text-gray-200">偏好</h4>
+            </div>
+            <label class="flex items-center justify-between py-1">
+              <span class="text-sm text-gray-600 dark:text-gray-400">自动生成AI摘要</span>
+              <input type="checkbox" x-model="settings.auto_summary" @change="updateField('auto_summary', $event.target.checked)"
+                     class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+            </label>
+            <label class="flex items-center justify-between py-1">
+              <span class="text-sm text-gray-600 dark:text-gray-400">桌面通知</span>
+              <input type="checkbox" x-model="settings.notifications" @change="updateField('notifications', $event.target.checked)"
+                     class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+            </label>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">主题</label>
+              <select @change="$store.ui.setTheme($event.target.value)"
+                      class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+                <option value="system" :selected="$store.ui.themePreference === 'system'">跟随系统</option>
+                <option value="light" :selected="$store.ui.themePreference === 'light'">亮色</option>
+                <option value="dark" :selected="$store.ui.themePreference === 'dark'">暗色</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-xs font-medium text-gray-500 mb-1 block">邮件签名</label>
+              <textarea x-model="settings.signature" @input="updateField('signature', $event.target.value)"
+                        rows="3" placeholder="例如：此致&#10;张三 | 运维部"
+                        class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30"></textarea>
+              <p class="text-xs text-gray-400 mt-1">AI 起草回复时会自动在结尾附上此签名。</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- 保存按钮 -->
+      <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex justify-end flex-shrink-0">
+        <button @click="save()" :disabled="saving"
+                class="px-5 py-2 text-sm rounded-md bg-indigo-600 hover:bg-indigo-700 text-white font-medium disabled:opacity-50 transition">
+          <span x-show="!saving">保存设置</span>
+          <span x-show="saving">保存中...</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 帮助 ==================== -->
+  <div x-show="$store.ui.helpOpen" style="display:none" @keydown.escape.window="$store.ui.helpOpen=false"
+       class="fixed inset-0 z-[60] flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-black/30 dark:bg-black/50" @click="$store.ui.helpOpen=false"></div>
+    <div class="relative w-full max-w-lg bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 flex flex-col max-h-[80vh]">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="font-semibold text-sm flex items-center gap-2"><i data-lucide="help-circle" class="w-4 h-4"></i> 使用帮助</h3>
+        <button @click="$store.ui.helpOpen=false" class="p-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm text-gray-600 dark:text-gray-300 custom-scrollbar">
+        <div><p class="font-semibold text-gray-800 dark:text-gray-200 mb-1">🔍 搜索</p><p class="text-xs leading-relaxed">直接输入关键词；或点右侧“高级”按钮，点选 发件人 / 主题 / 日期 / 含附件 等条件；也支持操作符 from: subject: has:attachment before: after:。点 🔖 可把搜索保存为侧栏“智能视图”。</p></div>
+        <div><p class="font-semibold text-gray-800 dark:text-gray-200 mb-1">✅ 批量操作</p><p class="text-xs leading-relaxed">勾选邮件左侧复选框 → 顶部出现批量栏：全选 / 标记已读 / 未读 / 加星 / 分类为… / 删除。</p></div>
+        <div><p class="font-semibold text-gray-800 dark:text-gray-200 mb-1">⚙️ 邮件规则</p><p class="text-xs leading-relaxed">侧栏“邮件规则”进入：设定条件（发件人/主题/正文… 支持 且/或）+ 可选 AI 语义判断 → 命中后执行 分类 / 星标 / 已读 / 跳过AI / 专用摘要与回复提示词。可用自然语言一键生成规则，或让 AI 评估规则。命中的规则会在新邮件到达时自动执行（如“按发件人自动分类”）。</p></div>
+        <div><p class="font-semibold text-gray-800 dark:text-gray-200 mb-1">✨ AI 能力</p><p class="text-xs leading-relaxed">邮件详情自动生成结构化摘要（含历史提醒）；“AI待办”按钮从邮件提取待办；AI 助手可就邮件多轮问答；起草回复自动匹配原文语言并附签名。</p></div>
+        <div><p class="font-semibold text-gray-800 dark:text-gray-200 mb-1">⌨️ 快捷键</p><p class="text-xs leading-relaxed">↑/↓ 或 j/k 上下切换邮件（选中即打开）· Enter 打开 · / 聚焦搜索 · Cmd/Ctrl+K 命令面板 · R 回复 · A 回复全部 · S 星标 · U 切换已读 · E 删除 · C 写新邮件 · I 收件箱 · Esc 关闭弹窗</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== Cmd+K 命令面板 ==================== -->
+  <div x-show="$store.ui.commandPaletteOpen"
+       x-transition:enter="transition ease-out duration-150"
+       x-transition:enter-start="opacity-0 scale-95"
+       x-transition:enter-end="opacity-100 scale-100"
+       x-transition:leave="transition ease-in duration-100"
+       x-transition:leave-start="opacity-100 scale-100"
+       x-transition:leave-end="opacity-0 scale-95"
+       class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh]"
+       x-data="commandPalette">
+    <!-- Backdrop -->
+    <div class="absolute inset-0 bg-black/30 dark:bg-black/50 cmd-backdrop" @click="close()"></div>
+
+    <!-- 面板 -->
+    <div class="relative w-full max-w-md bg-white dark:bg-gray-900 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+         @keydown="onKeydown($event)">
+      <!-- 搜索输入 -->
+      <div class="flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <i data-lucide="command" class="w-4 h-4 text-gray-400 flex-shrink-0"></i>
+        <input x-model="query"
+               x-ref="cmdInput"
+               x-init="$watch('$store.ui.commandPaletteOpen', (v) => { if(v) $nextTick(() => $refs.cmdInput.focus()) })"
+               type="text"
+               placeholder="搜索邮件 · 问 AI · 执行命令…"
+               @input="$store.ui.runOmni(); selectedIndex = 0"
+               class="flex-1 bg-transparent text-sm focus:outline-none placeholder-gray-400">
+      </div>
+
+      <!-- 结果：AI / 搜索 / 邮件命中 / 命令 -->
+      <div class="max-h-[340px] overflow-y-auto py-1">
+        <template x-for="(cmd, idx) in commands" :key="cmd.id">
+          <button @click="execute(cmd)"
+                  :class="idx === selectedIndex ? 'bg-indigo-50 dark:bg-indigo-900/30' : 'hover:bg-gray-50 dark:hover:bg-gray-800'"
+                  class="w-full flex items-center gap-3 px-4 py-2.5 text-sm transition text-gray-700 dark:text-gray-300"
+                  @mouseenter="selectedIndex = idx">
+            <i :data-lucide="cmd.icon" class="w-4 h-4 flex-shrink-0" :class="cmd.kind==='ai' ? 'text-indigo-500' : (cmd.kind==='email' ? 'text-gray-400' : 'opacity-60')"></i>
+            <span class="flex-1 min-w-0 text-left">
+              <span class="block truncate" :class="cmd.kind==='ai' ? 'text-indigo-700 dark:text-indigo-300 font-medium' : ''" x-text="cmd.label"></span>
+              <span x-show="cmd.sub" class="block truncate text-xs text-gray-400" x-text="cmd.sub"></span>
+            </span>
+            <kbd x-show="cmd.shortcut" class="px-1.5 py-0.5 text-[10px] bg-gray-100 dark:bg-gray-800 rounded font-mono flex-shrink-0" x-text="cmd.shortcut"></kbd>
+            <span x-show="cmd.kind==='email'" class="text-[10px] text-gray-400 flex-shrink-0">邮件</span>
+          </button>
+        </template>
+        <div x-show="commands.length === 0" class="px-4 py-6 text-center text-sm text-gray-400">
+          输入以搜索邮件、向 AI 提问或执行命令
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 待办事项视图 (内嵌在详情区) ==================== -->
+  <!-- 新版本提示：页面长时间不刷新就会用着旧代码，这条自己冒出来 -->
+  <div x-show="$store.ui.newVersion" style="display:none"
+       class="fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-3
+              px-4 py-2.5 rounded-lg shadow-lg bg-indigo-600 text-white text-sm">
+    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+    <span>已有新版本
+      <span class="opacity-70 text-xs"
+            x-text="'（' + $store.ui.appVersion + ' → ' + $store.ui.newVersion + '）'"></span>
+    </span>
+    <button @click="$store.ui.reloadForNewVersion()"
+            class="px-2.5 py-1 rounded-md bg-white/20 hover:bg-white/30 font-medium transition">
+      刷新
+    </button>
+    <button @click="$store.ui.newVersion = ''" title="稍后"
+            class="px-1.5 py-1 rounded-md hover:bg-white/20 transition">
+      <i data-lucide="x" class="w-3.5 h-3.5"></i>
+    </button>
+  </div>
+
+  <!-- ==================== 通讯录 ==================== -->
+  <!-- 数据来自 /api/people（服务端已过滤 Exchange X.500 DN、并把"等于地址/是地址片段"
+       的假姓名清成空）。姓名为空时只显示地址，不硬凑名字。 -->
+  <div x-show="$store.mail.view==='contacts'" style="display:none" class="fixed inset-0 z-40 bg-gray-50 dark:bg-gray-900 overflow-y-auto custom-scrollbar">
+    <div class="max-w-4xl mx-auto px-6 py-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-100"><i data-lucide="users" class="w-5 h-5"></i> 通讯录
+          <span class="text-sm font-normal text-gray-400" x-text="'（'+($store.mail.filteredContacts?$store.mail.filteredContacts.length:0)+' / '+($store.mail.contacts?$store.mail.contacts.length:0)+' 位）'"></span>
+        </h2>
+        <div class="flex items-center gap-2">
+          <button @click="$store.mail.fetchContacts(true)" class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition"><i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline"></i> 刷新</button>
+          <button @click="$store.mail.setView('inbox')" class="px-3 py-1.5 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">返回收件箱</button>
+        </div>
+      </div>
+
+      <input x-model="$store.mail.contactQuery" type="text" placeholder="按姓名或邮箱地址过滤…（本地过滤，即时生效）"
+             class="w-full mb-4 px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 focus:outline-none focus:ring-2 focus:ring-brand/30">
+
+      <template x-if="!$store.mail.contacts || $store.mail.contacts.length===0">
+        <p class="text-sm text-gray-400 py-16 text-center">通讯录为空。它由邮件往来自动汇总，同步过邮件后就会有内容。</p>
+      </template>
+
+      <div class="space-y-1.5">
+        <template x-for="c in ($store.mail.filteredContacts || []).slice(0, 300)" :key="c.email">
+          <div class="flex items-center gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 px-3 py-2">
+            <div class="shrink-0 w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 grid place-items-center text-xs font-medium"
+                 x-text="((c.name || c.email || '?').trim()[0] || '?').toUpperCase()"></div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm text-gray-800 dark:text-gray-200 truncate">
+                <span x-show="c.name" x-text="c.name" class="font-medium"></span>
+                <span x-text="c.name ? ' <'+c.email+'>' : c.email" class="text-gray-500"></span>
+              </div>
+              <div class="text-xs text-gray-400" x-text="'往来 '+(c.count||0)+' 封'+(c.last_seen ? ' · 最近 '+new Date(c.last_seen*1000).toLocaleDateString() : '')"></div>
+            </div>
+            <button @click="$store.mail.composeTo(c.email)" title="写邮件给 TA"
+                    class="shrink-0 px-2 py-1 text-xs rounded-md text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition"><i data-lucide="pencil" class="w-3.5 h-3.5 inline"></i> 写邮件</button>
+            <button @click="$store.mail.viewCorrespondence(c.email)" title="查看往来邮件"
+                    class="shrink-0 px-2 py-1 text-xs rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition"><i data-lucide="mail" class="w-3.5 h-3.5 inline"></i> 往来</button>
+          </div>
+        </template>
+      </div>
+      <p x-show="($store.mail.filteredContacts||[]).length > 300" class="text-xs text-gray-400 mt-3 text-center">
+        仅显示前 300 位，用上方过滤框缩小范围
+      </p>
+    </div>
+  </div>
+
+  <!-- ==================== 草稿箱 ==================== -->
+  <!-- Agent 经 MCP create_draft 写入的草稿也在这里。发送必须点开草稿、在撰写窗确认。 -->
+  <div x-show="$store.mail.view==='drafts'" style="display:none" class="fixed inset-0 z-40 bg-gray-50 dark:bg-gray-900 overflow-y-auto custom-scrollbar">
+    <div class="max-w-3xl mx-auto px-6 py-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-100"><i data-lucide="file-edit" class="w-5 h-5"></i> 草稿箱
+          <span class="text-sm font-normal text-gray-400" x-text="'（'+($store.mail.drafts?$store.mail.drafts.length:0)+' 封待发）'"></span>
+        </h2>
+        <div class="flex items-center gap-2">
+          <button @click="$store.mail.fetchDrafts()" class="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-300 transition"><i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline"></i> 刷新</button>
+          <button @click="$store.mail.setView('inbox')" class="px-3 py-1.5 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">返回收件箱</button>
+        </div>
+      </div>
+
+      <p class="text-xs text-gray-400 mb-4">草稿不会自动发送。点开后在撰写窗确认收件人与正文，再手动发送。</p>
+
+      <template x-if="!$store.mail.drafts || $store.mail.drafts.length===0">
+        <p class="text-sm text-gray-400 py-16 text-center">草稿箱是空的。可在撰写窗点“存草稿”，或由 AI 助手写入。</p>
+      </template>
+
+      <div class="space-y-2">
+        <template x-for="dr in $store.mail.drafts" :key="dr.id">
+          <div class="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-3">
+            <i data-lucide="file-text" class="w-4 h-4 mt-0.5 text-gray-400 flex-shrink-0"></i>
+            <div class="flex-1 min-w-0 cursor-default" @click="$store.mail.openDraft(dr.id)">
+              <p class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate" x-text="dr.subject || '(无主题)'"></p>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-500">
+                <span x-text="'收件人：' + (dr.to || '(未填)')"></span>
+                <span x-show="dr.source === 'agent'" class="text-sky-600 dark:text-sky-400">AI 写入</span>
+                <span x-show="dr.updated_at" x-text="new Date(dr.updated_at * 1000).toLocaleString()"></span>
+              </div>
+            </div>
+            <button @click="$store.mail.openDraft(dr.id)" title="打开编辑" class="flex-shrink-0 text-gray-300 dark:text-gray-600 hover:text-indigo-500 transition p-1"><i data-lucide="pencil" class="w-4 h-4"></i></button>
+            <button @click="$store.mail.removeDraft(dr.id)" title="删除" class="flex-shrink-0 text-gray-300 dark:text-gray-600 hover:text-red-500 transition p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 待办事项 ==================== -->
+  <div x-show="$store.mail.view==='todos'" style="display:none" class="fixed inset-0 z-40 bg-gray-50 dark:bg-gray-900 overflow-y-auto custom-scrollbar">
+    <div class="max-w-3xl mx-auto px-6 py-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-100"><i data-lucide="list-checks" class="w-5 h-5"></i> 待办事项
+          <span class="text-sm font-normal text-gray-400" x-text="'（'+($store.mail.todos?$store.mail.todos.filter(t=>t.status!=='done').length:0)+' 项未完成）'"></span>
+        </h2>
+        <div class="flex items-center gap-2">
+          <button @click="$store.mail.openTodoBatch && $store.mail.openTodoBatch()" class="px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 hover:bg-indigo-700 text-white transition"><i data-lucide="sparkles" class="w-3.5 h-3.5 inline"></i> 批量提取</button>
+          <button @click="$store.mail.setView('inbox')" class="px-3 py-1.5 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">返回收件箱</button>
+        </div>
+      </div>
+
+      <div class="flex gap-2 mb-4">
+        <input x-model="$store.mail.newTodoText" @keydown.enter="$store.mail.addTodo($store.mail.newTodoText); $store.mail.newTodoText=''"
+               placeholder="手动添加一条待办，回车保存…"
+               class="flex-1 px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 focus:outline-none focus:ring-2 focus:ring-brand/30">
+        <button @click="$store.mail.addTodo($store.mail.newTodoText); $store.mail.newTodoText=''" class="px-3 py-2 text-sm rounded-md bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700">添加</button>
+      </div>
+
+      <template x-if="!$store.mail.todos || $store.mail.todos.length===0">
+        <p class="text-sm text-gray-400 py-16 text-center">暂无待办。可在邮件里点“AI待办”，或上方“批量提取”，或手动添加。</p>
+      </template>
+
+      <div class="space-y-2">
+        <template x-for="td in $store.mail.todos" :key="td.id">
+          <div class="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-3" :class="td.status==='done' ? 'opacity-60' : ''">
+            <input type="checkbox" :checked="td.status==='done'" @change="$store.mail.toggleTodo(td.id)" class="mt-0.5 w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 flex-shrink-0">
+            <div class="flex-1 min-w-0">
+              <p class="text-sm text-gray-800 dark:text-gray-200 break-words" :class="td.status==='done' ? 'line-through text-gray-400' : ''" x-text="td.content"></p>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs">
+                <span x-show="td.priority==='high'" class="text-red-500 font-medium">● 高优先级</span>
+                <span x-show="td.due_date" class="text-amber-600 dark:text-amber-400" x-text="'截止 '+td.due_date"></span>
+                <button x-show="td.source_email_id" @click="$store.mail.openTodoSource(td.source_email_id)" class="text-indigo-500 hover:underline inline-flex items-center gap-1"><i data-lucide="mail" class="w-3 h-3"></i> 查看来源邮件</button>
+              </div>
+            </div>
+            <button @click="$store.mail.removeTodo(td.id)" title="删除" class="flex-shrink-0 text-gray-300 dark:text-gray-600 hover:text-red-500 transition p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- 批量提取待办 对话框 -->
+  <div x-show="$store.mail.todoBatch.open" style="display:none" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="$store.mail.todoBatch.open=false">
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-md mx-4 p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-base font-semibold text-gray-800 dark:text-gray-100 flex items-center gap-2"><i data-lucide="sparkles" class="w-4 h-4"></i> 批量提取待办</h3>
+        <button @click="$store.mail.todoBatch.open=false" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="text-xs font-medium text-gray-500 mb-1 block">时间范围</label>
+          <select x-model.number="$store.mail.todoBatch.days" class="w-full px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+            <option :value="1">最近 1 天</option>
+            <option :value="3">最近 3 天</option>
+            <option :value="7">最近 7 天</option>
+            <option :value="30">最近 30 天</option>
+            <option :value="90">最近 90 天</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500 mb-1 block">账号范围（不勾选=全部账号）</label>
+          <div class="space-y-1 max-h-40 overflow-y-auto rounded-md border border-gray-100 dark:border-gray-700 p-2">
+            <template x-for="a in $store.mail.displayAccounts" :key="a.name">
+              <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <input type="checkbox" :value="a.name" x-model="$store.mail.todoBatch.accounts" class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+                <span x-text="a.name"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+          <input type="checkbox" x-model="$store.mail.todoBatch.useAI" class="mt-0.5 w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500">
+          <span>用 AI 深度提取（逐封分析，较慢）；不勾选则只汇集已生成过摘要的邮件里的待办（快）</span>
+        </label>
+        <div x-show="$store.mail.todoBatch.running" class="text-xs text-indigo-600 dark:text-indigo-400">
+          进度：<span x-text="$store.mail.todoBatch.scanned"></span> / <span x-text="$store.mail.todoBatch.total"></span> 封，已新增 <span x-text="$store.mail.todoBatch.added"></span> 条…
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-5">
+        <button @click="$store.mail.todoBatch.open=false" class="px-3 py-1.5 text-sm rounded-md bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600">关闭</button>
+        <button @click="$store.mail.runTodoBatch()" :disabled="$store.mail.todoBatch.running" class="px-4 py-1.5 text-sm rounded-md bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-50">
+          <span x-show="!$store.mail.todoBatch.running">开始提取</span><span x-show="$store.mail.todoBatch.running">提取中…</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 统计看板 (E) ==================== -->
+  <div x-show="$store.mail.view==='dashboard'" style="display:none" class="fixed inset-0 z-40 bg-gray-50 dark:bg-gray-900 overflow-y-auto custom-scrollbar">
+    <div class="max-w-5xl mx-auto px-6 py-6">
+      <div class="flex items-center justify-between mb-5">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-100"><i data-lucide="bar-chart-3" class="w-5 h-5"></i> 统计看板</h2>
+        <button @click="$store.mail.setView('inbox')" class="px-3 py-1.5 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">返回收件箱</button>
+      </div>
+      <template x-if="!$store.mail.dashboard"><p class="text-sm text-gray-400 py-16 text-center">加载中…</p></template>
+      <template x-if="$store.mail.dashboard">
+        <div class="space-y-5">
+          <div class="flex flex-wrap gap-3">
+            <div class="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4" style="min-width:110px">
+              <p class="text-xs text-gray-400">总邮件</p>
+              <p class="text-2xl font-bold text-gray-800 dark:text-gray-100" x-text="$store.mail.dashboard.total"></p>
+            </div>
+            <div class="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4" style="min-width:110px">
+              <p class="text-xs text-gray-400">未读</p>
+              <p class="text-2xl font-bold text-indigo-600 dark:text-indigo-400" x-text="$store.mail.dashboard.unread"></p>
+            </div>
+            <div class="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4" style="min-width:110px">
+              <p class="text-xs text-gray-400">含附件</p>
+              <p class="text-2xl font-bold text-gray-800 dark:text-gray-100" x-text="$store.mail.dashboard.with_attachment"></p>
+            </div>
+            <div class="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4" style="min-width:110px">
+              <p class="text-xs text-gray-400">星标</p>
+              <p class="text-2xl font-bold text-amber-500" x-text="$store.mail.dashboard.starred"></p>
+            </div>
+          </div>
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">近 14 天邮件量</h3>
+            <template x-for="(it, ii) in $store.mail.dashboard.by_day" :key="ii">
+              <div class="flex items-center gap-2 mb-2 text-xs">
+                <span class="w-28 truncate text-gray-600 dark:text-gray-400" :title="it.label" x-text="it.label"></span>
+                <div class="flex-1 h-4 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">
+                  <div class="h-full bg-emerald-500 rounded" :style="'width:'+(it.count/$store.mail._maxCount($store.mail.dashboard.by_day)*100)+'%'"></div>
+                </div>
+                <span class="w-12 text-right text-gray-500 dark:text-gray-400" x-text="it.count"></span>
+              </div>
+            </template>
+          </div>
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">按分类</h3>
+            <template x-for="(it, ii) in $store.mail.dashboard.by_category" :key="ii">
+              <div class="flex items-center gap-2 mb-2 text-xs">
+                <span class="w-28 truncate text-gray-600 dark:text-gray-400" :title="it.label" x-text="it.label"></span>
+                <div class="flex-1 h-4 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">
+                  <div class="h-full bg-indigo-500 rounded" :style="'width:'+(it.count/$store.mail._maxCount($store.mail.dashboard.by_category)*100)+'%'"></div>
+                </div>
+                <span class="w-12 text-right text-gray-500 dark:text-gray-400" x-text="it.count"></span>
+              </div>
+            </template>
+          </div>
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">按账户</h3>
+            <template x-for="(it, ii) in $store.mail.dashboard.by_account" :key="ii">
+              <div class="flex items-center gap-2 mb-2 text-xs">
+                <span class="w-28 truncate text-gray-600 dark:text-gray-400" :title="it.label" x-text="it.label"></span>
+                <div class="flex-1 h-4 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">
+                  <div class="h-full bg-blue-500 rounded" :style="'width:'+(it.count/$store.mail._maxCount($store.mail.dashboard.by_account)*100)+'%'"></div>
+                </div>
+                <span class="w-12 text-right text-gray-500 dark:text-gray-400" x-text="it.count"></span>
+              </div>
+            </template>
+          </div>
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 p-4">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Top 发件人</h3>
+            <template x-for="(it, ii) in $store.mail.dashboard.top_senders" :key="ii">
+              <div class="flex items-center gap-2 mb-2 text-xs">
+                <span class="w-28 truncate text-gray-600 dark:text-gray-400" :title="it.label" x-text="it.label"></span>
+                <div class="flex-1 h-4 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">
+                  <div class="h-full bg-purple-500 rounded" :style="'width:'+(it.count/$store.mail._maxCount($store.mail.dashboard.top_senders)*100)+'%'"></div>
+                </div>
+                <span class="w-12 text-right text-gray-500 dark:text-gray-400" x-text="it.count"></span>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ==================== 话题聚合 (F) ==================== -->
+  <div x-show="$store.mail.view==='topics'" style="display:none" class="fixed inset-0 z-40 bg-gray-50 dark:bg-gray-900 overflow-y-auto custom-scrollbar">
+    <div class="max-w-4xl mx-auto px-6 py-6">
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="text-lg font-semibold flex items-center gap-2 text-gray-800 dark:text-gray-100"><i data-lucide="layers" class="w-5 h-5"></i> 会话聚合</h2>
+        <button @click="$store.mail.setView('inbox')" class="px-3 py-1.5 text-sm rounded-md hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300">返回收件箱</button>
+      </div>
+      <p class="text-xs text-gray-400 mb-3">仿 Gmail：近 30 天邮件按会话（同一主题往来）折叠成一行，显示参与者、最新摘要、封数与未读/星标/附件。点开一行即就地堆叠展开整条会话直接阅读，也可让 AI 综合分析进展与待办。</p>
+      <div class="flex items-center gap-3 mb-3 text-xs">
+        <label class="inline-flex items-center gap-1.5 cursor-default select-none text-gray-600 dark:text-gray-300">
+          <input type="checkbox" :checked="$store.mail.topicMultiOnly" @change="$store.mail.setTopicMultiOnly($event.target.checked)" class="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500">
+          仅显示多封会话
+        </label>
+        <button @click="$store.mail.loadTopics()" class="px-2.5 py-1 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700">刷新</button>
+      </div>
+      <div class="flex items-center gap-1.5 flex-wrap mb-3 border-b border-gray-200 dark:border-gray-700 pb-2">
+        <button @click="$store.mail.setActiveTab('')" :class="$store.mail.activeTabName==='' ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'" class="px-3 py-1 text-xs rounded-full transition">全部</button>
+        <template x-for="t in $store.mail.inboxTabs" :key="t.name">
+          <span class="inline-flex items-center group">
+            <button @click="$store.mail.setActiveTab(t.name)" :class="$store.mail.activeTabName===t.name ? 'bg-indigo-600 text-white' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'" class="pl-3 pr-2 py-1 text-xs rounded-full transition inline-flex items-center gap-1">
+              <span x-text="t.name"></span>
+              <span class="opacity-50 text-[10px]" x-text="t.kind==='category' ? '分类' : '话题'"></span>
+            </button>
+            <button @click="$store.mail.delInboxTab(t.name)" title="删除标签" class="ml-0.5 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition text-xs">✕</button>
+          </span>
+        </template>
+        <button @click="$store.mail.showTabManager=!$store.mail.showTabManager" class="px-2 py-1 text-xs rounded-full border border-dashed border-gray-300 dark:border-gray-600 text-gray-500 hover:text-indigo-600 hover:border-indigo-400 transition">+ 标签</button>
+      </div>
+      <div x-show="$store.mail.showTabManager" class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/40 p-3 mb-3">
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <input x-model="$store.mail.newTabName" placeholder="标签名" style="width:120px" class="px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+          <select x-model="$store.mail.newTabKind" class="px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+            <option value="category">来自分类</option>
+            <option value="topic">来自话题</option>
+          </select>
+          <select x-show="$store.mail.newTabKind==='category'" x-model="$store.mail.newTabRef" class="px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+            <option value="">选择分类…</option>
+            <template x-for="c in $store.mail.availableCats" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+          <select x-show="$store.mail.newTabKind==='topic'" x-model="$store.mail.newTabRef" class="px-2 py-1.5 rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+            <option value="">选择话题…</option>
+            <template x-for="tr in $store.mail.topicRules" :key="tr.name"><option :value="tr.name" x-text="tr.name"></option></template>
+          </select>
+          <button @click="$store.mail.addInboxTab()" class="px-3 py-1.5 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white">添加标签</button>
+        </div>
+        <p class="text-[11px] text-gray-400 mt-2">标签可来自「分类规则」的分类，或「话题聚合」的话题（话题需先在下方添加规则）。</p>
+      </div>
+      <div x-show="$store.mail.defOpen" class="rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/40 dark:bg-indigo-900/10 p-3 mb-4">
+        <p class="text-xs font-medium text-indigo-600 dark:text-indigo-300 mb-2">新建智能话题 · 属性 + 关键词 + 语义可组合；也可用一句话让 AI 自动生成条件</p>
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <input x-model="$store.mail.topicDef.name" placeholder="话题名（如：抄送我的会议）" style="width:150px" class="px-2 py-1.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+          <input x-model="$store.mail.topicDef.nl" @keydown.enter="$store.mail.nlGenerate()" placeholder="用一句话描述（如：抄送给我的会议邮件）" style="min-width:260px" class="flex-1 px-2 py-1.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+          <button @click="$store.mail.nlGenerate()" :disabled="$store.mail.topicDefBusy" class="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"><span x-show="!$store.mail.topicDefBusy">✨ AI 生成</span><span x-show="$store.mail.topicDefBusy">生成中…</span></button>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 mb-2 text-xs text-gray-600 dark:text-gray-300">
+          <label class="inline-flex items-center gap-1 cursor-default"><input type="checkbox" x-model="$store.mail.topicDef.filters.cc_me" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 抄送我</label>
+          <label class="inline-flex items-center gap-1 cursor-default"><input type="checkbox" x-model="$store.mail.topicDef.filters.to_me" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 发给我</label>
+          <label class="inline-flex items-center gap-1 cursor-default"><input type="checkbox" x-model="$store.mail.topicDef.filters.has_attachment" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 有附件</label>
+          <label class="inline-flex items-center gap-1 cursor-default"><input type="checkbox" x-model="$store.mail.topicDef.filters.unread" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 未读</label>
+          <label class="inline-flex items-center gap-1 cursor-default"><input type="checkbox" x-model="$store.mail.topicDef.filters.starred" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"> 星标</label>
+          <input x-model="$store.mail.topicDef.filters.from" placeholder="发件人含" style="width:110px" class="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none">
+          <select x-model="$store.mail.topicDef.filters.category" class="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent">
+            <option value="">分类不限</option>
+            <template x-for="c in $store.mail.availableCats" :key="c"><option :value="c" x-text="c"></option></template>
+          </select>
+        </div>
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <input x-model="$store.mail.topicDef.keywords" placeholder="主题关键词(精确,逗号分隔)" style="width:180px" class="px-2 py-1.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+          <input x-model="$store.mail.topicDef.query" placeholder="语义描述(模糊召回,可选)" style="min-width:180px" class="flex-1 px-2 py-1.5 text-xs rounded border border-gray-200 dark:border-gray-700 bg-transparent focus:outline-none focus:ring-2 focus:ring-brand/30">
+          <button @click="$store.mail.previewTopicDef()" class="px-3 py-1.5 text-xs rounded-md border border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30">预览</button>
+          <button @click="$store.mail.saveTopicDef()" class="px-3 py-1.5 text-xs rounded-md bg-indigo-600 hover:bg-indigo-700 text-white">保存话题</button>
+          <span x-show="$store.mail.topicPreviewCount!==null" class="text-xs text-gray-500 dark:text-gray-400">约 <span x-text="$store.mail.topicPreviewCount"></span> 封命中</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <template x-for="tr in $store.mail.topicRules" :key="tr.name">
+            <span class="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300">
+              <span x-text="tr.name"></span>
+              <button @click="$store.mail.delTopicRule(tr.name)" class="text-gray-400 hover:text-red-500">✕</button>
+            </span>
+          </template>
+        </div>
+      </div>
+      <div class="flex gap-4 items-start">
+        <div class="w-48 flex-shrink-0 space-y-0.5 text-sm">
+          <button @click="$store.mail.setActiveTab('')" :class="$store.mail.activeTabName==='' ? 'bg-indigo-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'" class="w-full text-left px-3 py-1.5 rounded-md transition">全部会话</button>
+          <div class="flex items-center justify-between px-2 pt-3 pb-1">
+            <span class="text-[11px] text-gray-400">我的话题</span>
+            <button @click="$store.mail.defOpen=!$store.mail.defOpen" class="text-[11px] text-indigo-600 dark:text-indigo-300 hover:underline">＋新建</button>
+          </div>
+          <template x-for="r in $store.mail.sortedTopics" :key="r.name">
+            <div draggable="true" @dragstart="$store.mail.onTopicDragStart(r.name)" @dragover.prevent @drop="$store.mail.onTopicDrop(r.name)" @click="$store.mail.setActiveTab(r.name)"
+                 :class="$store.mail.activeTabName===r.name ? 'bg-indigo-600 text-white' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'"
+                 class="group flex items-center gap-1 px-2 py-1.5 rounded-md cursor-default transition">
+              <span class="text-gray-400 cursor-default select-none flex-shrink-0" title="拖拽排序">⋮⋮</span>
+              <span class="flex-1 min-w-0 truncate" :class="r.hidden && 'opacity-40'"><span x-show="r.pinned" class="text-amber-400">★</span><span x-text="r.name"></span></span>
+              <span x-show="($store.mail.topicCounts[r.name]||{}).unread" class="text-[10px] px-1.5 rounded-full bg-indigo-500 text-white flex-shrink-0" x-text="($store.mail.topicCounts[r.name]||{}).unread"></span>
+              <button @click.stop="$store.mail.toggleMute(r.name)" :title="r.mute?'取消免打扰':'免打扰(从收件箱收起)'" class="text-xs flex-shrink-0 transition" :class="r.mute?'opacity-100 text-orange-500':'opacity-0 group-hover:opacity-100 text-gray-400 hover:text-orange-500'">🔕</button>
+              <button @click.stop="$store.mail.toggleQuick(r.name)" :title="r.quick?'从快捷栏移除':'钉到快捷栏(最多3个)'" class="text-xs flex-shrink-0 transition" :class="r.quick?'opacity-100 text-indigo-500':'opacity-0 group-hover:opacity-100 text-gray-400 hover:text-indigo-500'">📌</button>
+              <button @click.stop="$store.mail.pinTopic(r.name)" :title="r.pinned?'取消置顶':'置顶'" class="text-xs flex-shrink-0 transition" :class="r.pinned?'opacity-100 text-amber-400':'opacity-0 group-hover:opacity-100 text-gray-400 hover:text-amber-500'">★</button>
+              <button @click.stop="$store.mail.toggleHideTopic(r.name)" :title="r.hidden?'显示':'隐藏'" class="opacity-0 group-hover:opacity-100 text-xs text-gray-400 hover:text-indigo-500 flex-shrink-0" x-text="r.hidden?'◌':'○'"></button>
+              <button @click.stop="$store.mail.delTopicRule(r.name)" title="删除" class="opacity-0 group-hover:opacity-100 text-xs text-gray-400 hover:text-red-500 flex-shrink-0">✕</button>
+            </div>
+          </template>
+          <label class="flex items-center gap-1 px-2 pt-2 text-[11px] text-gray-400 cursor-default select-none"><input type="checkbox" x-model="$store.mail.showHiddenTopics" class="rounded border-gray-300 text-indigo-600"> 显示隐藏的</label>
+        </div>
+        <div class="flex-1 min-w-0">
+      <template x-if="$store.mail.topicsLoading"><p class="text-sm text-gray-400 py-16 text-center">聚合中…</p></template>
+      <template x-if="!$store.mail.topicsLoading && $store.mail.topics.length===0"><p class="text-sm text-gray-400 py-16 text-center">近 30 天没有可聚合的会话</p></template>
+      <div class="space-y-2">
+        <template x-for="(tp, idx) in $store.mail.topics" :key="idx">
+          <div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/40 overflow-hidden">
+            <div @click="$store.mail.toggleTopicExpand(idx)" class="flex items-center gap-3 px-3 py-2.5 cursor-default hover:bg-gray-50 dark:hover:bg-gray-800/60 transition">
+              <span class="flex-shrink-0 text-gray-400 text-xs transition-transform duration-150" :class="tp._expanded && 'rotate-90'" style="display:inline-block">▶</span>
+              <div class="w-36 flex-shrink-0 truncate text-sm" :class="tp.unread>0 ? 'font-semibold text-gray-900 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300'">
+                <span x-show="tp.custom" class="text-[10px] px-1 rounded bg-indigo-100 dark:bg-indigo-800 text-indigo-600 dark:text-indigo-300 mr-1">话题</span>
+                <span x-text="(tp.senders||[]).join('、')"></span>
+              </div>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="truncate text-sm" :class="tp.unread>0 ? 'font-semibold text-gray-900 dark:text-gray-100' : 'text-gray-700 dark:text-gray-300'" x-text="tp.topic"></span>
+                  <span x-show="tp.count>1" class="flex-shrink-0 text-xs text-gray-400" x-text="'('+tp.count+')'"></span>
+                </div>
+                <div class="truncate text-xs text-gray-400 mt-0.5" x-text="tp.snippet"></div>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0 text-gray-400">
+                <span x-show="tp.unread>0" class="inline-block w-2 h-2 rounded-full bg-indigo-500" title="有未读"></span>
+                <span x-show="tp.starred" class="text-amber-400 text-sm" title="星标">★</span>
+                <span x-show="tp.has_attachment" class="text-gray-400 text-xs" title="含附件">📎</span>
+                <span class="text-xs w-20 text-right truncate" x-text="(tp.latest||'').slice(5,16).replace('T',' ')"></span>
+              </div>
+            </div>
+            <div x-show="tp._expanded" class="border-t border-gray-100 dark:border-gray-700 bg-gray-50/60 dark:bg-gray-900/30">
+              <div class="flex items-center justify-between gap-2 px-3 py-2">
+                <span class="text-xs text-gray-400 truncate" x-text="tp.count + ' 封 · ' + (tp.senders||[]).join('、')"></span>
+                <button @click.stop="$store.mail.analyzeTopic(idx)" :disabled="tp._analyzing" class="flex-shrink-0 px-3 py-1 text-xs font-medium rounded-md bg-indigo-600 hover:bg-indigo-700 text-white transition disabled:opacity-50">
+                  <span x-show="!tp._analyzing">✨ AI 综合分析</span><span x-show="tp._analyzing">分析中…</span>
+                </button>
+              </div>
+              <div x-show="tp.analysis" class="mx-3 mb-2 p-3 text-xs rounded-md bg-indigo-50 dark:bg-indigo-900/20 text-gray-700 dark:text-gray-200" style="white-space:pre-wrap" x-text="tp.analysis"></div>
+              <template x-for="(m, mi) in tp.members" :key="m.id">
+                <div class="mx-3 mb-2 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/70">
+                  <div @click="$store.mail.toggleThreadMsg(idx, mi)" class="flex items-center gap-2 px-3 py-2 cursor-default hover:bg-gray-50 dark:hover:bg-gray-800/40">
+                    <span class="text-xs truncate w-28 flex-shrink-0" :class="m.unread ? 'font-semibold text-gray-900 dark:text-gray-100' : 'text-gray-700 dark:text-gray-300'" x-text="m.sender"></span>
+                    <span x-show="!m._expanded" class="flex-1 min-w-0 truncate text-xs text-gray-400" x-text="m.snippet"></span>
+                    <span x-show="m._expanded" class="flex-1 min-w-0 truncate text-xs text-gray-500 dark:text-gray-400" x-text="m.subject"></span>
+                    <span x-show="m.starred" class="text-amber-400 text-xs flex-shrink-0">★</span>
+                    <span x-show="m.has_attachment" class="text-gray-400 text-xs flex-shrink-0">📎</span>
+                    <span class="text-[11px] text-gray-400 flex-shrink-0" x-text="(m.time||'').slice(5,16).replace('T',' ')"></span>
+                  </div>
+                  <div x-show="m._expanded" class="px-3 pb-3 border-t border-gray-100 dark:border-gray-700">
+                    <template x-if="m._loading"><p class="text-xs text-gray-400 py-2">加载正文…</p></template>
+<div x-show="!m._loading && $store.mail.threadRemoteBlocked(m) > 0" data-testid="thread-remote-banner" style="display:none;font-size:11px;color:#92400e;padding-top:4px"><span x-text="'已拦截 ' + $store.mail.threadRemoteBlocked(m) + ' 处外部图片'"></span><button type="button" @click.stop="$store.mail.threadShowRemote(m)" style="margin-left:8px;text-decoration:underline">显示图片</button></div>
+                    <div x-show="!m._loading" class="email-body text-sm text-gray-700 dark:text-gray-200 pt-2 overflow-x-auto" style="word-break:break-word" x-html="$store.mail.threadMsgHtml(m)"></div>
+                    <div class="mt-2">
+                      <button @click.stop="$store.mail.openTopicEmail(m.id)" class="text-xs text-indigo-600 hover:underline">在收件箱打开这封</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 通知 Toast ==================== -->
+  <div class="fixed bottom-4 right-4 z-[70] space-y-2">
+    <template x-for="notification in $store.ui.notifications" :key="notification.id">
+      <div x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="opacity-0 translate-y-2"
+           x-transition:enter-end="opacity-100 translate-y-0"
+           x-transition:leave="transition ease-in duration-150"
+           x-transition:leave-start="opacity-100"
+           x-transition:leave-end="opacity-0"
+           :class="{
+             'bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800 text-green-800 dark:text-green-300': notification.type === 'success',
+             'bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800 text-red-800 dark:text-red-300': notification.type === 'error',
+             'bg-blue-50 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300': notification.type === 'info',
+           }"
+           class="px-4 py-2.5 rounded-lg border shadow-lg text-sm font-medium max-w-xs">
+        <span x-text="notification.message"></span>
+      </div>
+    </template>
+  </div>
+
+  <!-- Lucide Icons 初始化 -->
+  <script>
+    // Lucide图标渲染：debounce + 仅处理未转换的<i>标签，避免无限循环
+    document.addEventListener('DOMContentLoaded', () => {
+      // lucide 通过 async 脚本加载，DOMContentLoaded 时可能尚未就绪，
+      // 直接调用会抛出未捕获的 ReferenceError。此处做存在性判断 + 轮询兜底。
+      function renderIcons() {
+        if (typeof lucide === 'undefined' || !lucide.createIcons) return false;
+        try { lucide.createIcons(); return true; } catch (e) { return false; }
+      }
+      if (!renderIcons()) {
+        let tries = 0;
+        const readyTimer = setInterval(() => {
+          if (renderIcons() || ++tries > 40) clearInterval(readyTimer);
+        }, 100);
+      }
+
+      let iconTimer = null;
+      const observer = new MutationObserver(() => {
+        if (typeof lucide === 'undefined' || !lucide.createIcons) return;
+        // 检查是否还有未渲染的lucide图标（<i data-lucide>未转为<svg>）
+        if (!document.querySelector('i[data-lucide]')) return;
+        // debounce: 合并短时间内多次DOM变化为一次渲染
+        if (iconTimer) return;
+        iconTimer = requestAnimationFrame(() => {
+          iconTimer = null;
+          try { lucide.createIcons(); } catch (e) {}
+        });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  </script>
+<div id="quillbox-classic-frozen" style="position:fixed;left:50%;bottom:14px;transform:translateX(-50%);z-index:9999;padding:8px 14px;border-radius:10px;background:#2F2A55;color:#ECEDF3;font:13px/1.5 system-ui,'Microsoft YaHei',sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.25)">经典界面已冻结，只修缺陷不加功能；今日分拣、AI 简报、完成说明、稍后提醒等都在新界面。 <a href="/app" style="color:#CFC7FF;font-weight:600">打开新界面 ›</a> <button onclick="this.parentNode.remove()" style="margin-left:8px;background:none;border:0;color:#A9ACBE;cursor:pointer" aria-label="关闭">✕</button></div>
+</body>
+</html>

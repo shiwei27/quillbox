@@ -1,0 +1,5 @@
+/* Inter 4.1（rsms/inter 官方发布，SIL OFL 1.1，见 LICENSE.txt）。本地托管：/app CSP 只允许 font-src 'self'。 */
+@font-face{font-family:"Inter";font-style:normal;font-weight:400;font-display:swap;src:url("./Inter-Regular.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-style:normal;font-weight:500;font-display:swap;src:url("./Inter-Medium.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-style:normal;font-weight:600;font-display:swap;src:url("./Inter-SemiBold.woff2") format("woff2")}
+@font-face{font-family:"Inter";font-style:normal;font-weight:700;font-display:swap;src:url("./Inter-Bold.woff2") format("woff2")}

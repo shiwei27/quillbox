@@ -1,0 +1,1319 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quillbox</title>
+  <!-- 新界面（与 /classic 经典界面并行）。 -->
+  <!-- 允许嵌入本页的父页面来源（服务端按 config.embed.allowed_origins 注入；也是 postMessage 白名单） -->
+  <meta name="quillbox-embed-origins" content="__QUILLBOX_EMBED_ORIGINS__">
+  <!-- 嵌入时是否允许发送：on / off（服务端按 config.embed.allow_send 注入，默认 on） -->
+  <meta name="quillbox-embed-send" content="__QUILLBOX_EMBED_SEND__">
+  <script>
+    window.__QUILLBOX_V2 = true;
+    (function () {   // 嵌入模式：?embed=1 且确实在 iframe 里；主题可由父页面 ?theme= 指定
+      var q = new URLSearchParams(location.search);
+      window.__QUILLBOX_EMBED = q.get('embed') === '1' && window.self !== window.top;
+      if (window.__QUILLBOX_EMBED) {
+        document.documentElement.classList.add('embed');
+        var t = q.get('theme'); if (t === 'light' || t === 'dark' || t === 'system') localStorage.setItem('quillbox-theme', t);
+      }
+    })();   // bundle.js 据此跳过旧版默认快捷键（旧版 E=删除，新版 E=归档）
+    (function () {   // 主题防闪烁：与 ui store 共用 localStorage 'quillbox-theme'
+      var t = localStorage.getItem('quillbox-theme');
+      var dark = t === 'dark' || ((!t || t === 'system') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    })();
+    window.addEventListener('error', function (ev) {
+      try { navigator.sendBeacon('/api/clientlog', new Blob([JSON.stringify({ level: 'error', msg: '[app2] ' + (ev.message || '') + ' @ ' + (ev.filename || '') + ':' + (ev.lineno || '') })], { type: 'application/json' })); } catch (e) {}
+    });
+  </script>
+  <link rel="stylesheet" href="/frontend/vendor/inter/inter.css">
+  <link rel="stylesheet" href="/frontend/vendor/phosphor/regular.css">
+  <link rel="stylesheet" href="/frontend/vendor/phosphor/fill.css">
+  <link rel="stylesheet" href="/frontend/css/app2.css?v=20261110a">
+  <script defer src="/frontend/js/bundle.js?v=20261110a"></script>
+  <script defer src="/frontend/js/v2/v2.js?v=20261110a"></script>
+  <script defer src="/frontend/js/vendor/alpine-persist.min.js"></script>
+  <script defer src="/frontend/js/vendor/alpinejs.min.js"></script>
+</head>
+<body x-data x-init="$nextTick(async () => {
+    let n = 0; while ((!$store.mail || !$store.ui || !$store.v2) && n++ < 60) await new Promise(r => setTimeout(r, 50));
+    $store.ui.init(); await $store.mail.init(); $store.settings && $store.settings.init(); $store.v2.init();
+  })">
+<div class="v2-app" :class="'lay-' + $store.v2.layout + ($store.v2.railFull ? ' rail-full' : ' rail-mini') + ($store.v2.compact ? ' compact' : '') + ($store.mail.currentEmail ? ' has-open' : '')" x-cloak>
+
+  <!-- ==================== 顶栏 ==================== -->
+  <header class="v2-titlebar v2-chrome" data-zone="ink">
+    <div class="v2-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="v2-qbar" data-testid="qbar" :class="{ focus: $store.v2.qb.focus }" @click.outside="$store.v2.qb.focus = false" @click="$el.querySelector('input').focus()">
+      <i class="ph ph-magnifying-glass"></i>
+      <template x-for="(c, i) in $store.v2.qb.chips" :key="c.k + c.v"><span class="v2-qchip" :class="{ ai: c.ai }" :title="c.ai ? 'AI 从你的话里理解出的条件' : ''">
+        <span x-text="(c.ai ? '✦ ' : '') + $store.v2.qbChipText(c)"></span><button @click.stop="$store.v2.qbRemove(i)" aria-label="删除条件"><i class="ph ph-x"></i></button></span></template>
+      <input x-model="$store.v2.qb.text" @focus="$store.v2.qb.focus = true" @click="$store.v2.qb.focus = true" @input="$store.v2.qbInput()" @keydown="$store.v2.qbKey($event)" aria-label="搜索"
+             :placeholder="$store.v2.qb.chips.length ? '再加条件或关键词…' : '搜索：发件人、主题、日期、关键词…（Tab 交给 AI 理解整句）'">
+      <span class="busy" x-show="$store.v2.qb.ai">AI 理解中…</span>
+      <button class="v2-qcmd" @click.stop="$store.v2.openCmd()" title="命令面板（跳转、执行命令）" data-testid="searchbtn"><kbd>⌘K</kbd></button>
+      <div class="v2-qsugg" x-show="$store.v2.qb.focus && $store.v2.qbSugg.length" style="display:none" data-testid="qsugg">
+        <template x-for="(sg, i) in $store.v2.qbSugg" :key="i + sg.label"><button :class="{ on: i === $store.v2.qb.idx, ai: sg.kind === 'ai' }" @mousedown.prevent="$store.v2.qbPick(sg)" @mouseenter="$store.v2.qb.idx = i">
+          <i class="ph" :class="sg.kind === 'ai' ? 'ph-sparkle' : sg.kind === 'kw' ? 'ph-text-aa' : 'ph-funnel'"></i><span class="t" x-text="sg.label"></span><small x-text="sg.hint"></small></button></template>
+      </div>
+    </div>
+    <div class="v2-tbright">
+      <button class="v2-iconbtn" @click="$store.mail.sync()" :title="($store.v2.autoSyncing || $store.ui.syncRunning) ? '同步中…' : '立即同步'" aria-label="立即同步">
+        <i class="ph ph-arrows-clockwise" :class="{ 'v2-spin': $store.v2.autoSyncing || $store.ui.syncRunning || ($store.mail.stats && $store.mail.stats.sync_running) }"></i>
+      </button>
+      <div class="v2-seg theme" role="radiogroup" aria-label="主题">
+        <template x-for="m in [['system','跟随系统','ph-desktop'],['light','浅色','ph-sun'],['dark','深色','ph-moon']]" :key="m[0]">
+          <button :class="{ on: $store.v2.themeMode === m[0] }" :title="m[1]" :aria-label="m[1]" role="radio" :aria-checked="$store.v2.themeMode === m[0]" @click="$store.v2.setTheme(m[0])"><i class="ph" :class="m[2]"></i></button>
+        </template>
+      </div>
+    </div>
+    <div class="v2-hfade"></div>
+  </header>
+
+  <div class="v2-main">
+    <!-- ==================== 左导航 ==================== -->
+    <aside class="v2-rail v2-chrome" data-zone="ink" aria-label="导航">
+      <button class="v2-navbtn v2-railtoggle" @click="$store.v2.toggleRail()" :title="($store.v2.railFull ? '收起侧栏' : '展开侧栏') + '（快捷键 [ ）'" :aria-label="$store.v2.railFull ? '收起侧栏' : '展开侧栏'" :aria-expanded="$store.v2.railFull" data-testid="rail-toggle">
+        <i class="ph" :class="$store.v2.railFull ? 'ph-caret-double-left' : 'ph-caret-double-right'"></i><span class="lbl">收起侧栏</span></button>
+      <button class="btn btn-primary btn-icon compose" @click="$store.v2.newCompose()" title="写邮件 (C)" aria-label="写邮件"><i class="ph ph-pencil-simple-line"></i><span class="lbl">写邮件</span></button>
+      <template x-for="v in $store.v2.VIEWS" :key="v[0]">
+        <button class="v2-navbtn" :class="{ on: $store.v2.view === v[0] }" :title="v[1]" :aria-label="v[1]" :data-view="v[0]" @click="$store.v2.go(v[0])">
+          <i :class="($store.v2.view === v[0] ? 'ph-fill ph-' : 'ph ph-') + v[2]"></i><span class="lbl" x-text="v[1]"></span>
+          <span class="v2-badge" x-show="$store.v2.viewCount(v[0])" x-text="$store.v2.viewCount(v[0])"></span>
+        </button>
+      </template>
+      <button class="v2-navbtn" :class="{ on: $store.v2.panel === 'folders' || $store.v2.view === 'folder' }" title="文件夹与智能文件夹" aria-label="文件夹" data-view="folders"
+              @click.stop="$store.v2.panel = $store.v2.panel === 'folders' ? '' : 'folders'"><i class="ph ph-folders"></i><span class="lbl">文件夹</span></button>
+      <button class="v2-navbtn" :class="{ on: $store.v2.panel === 'more' }" title="更多" aria-label="更多" data-view="more"
+              @click.stop="$store.v2.panel = $store.v2.panel === 'more' ? '' : 'more'"><i class="ph ph-dots-three-outline"></i><span class="lbl">更多</span></button>
+      <div style="flex:1"></div>
+      <button class="v2-navbtn" :class="{ on: $store.v2.view === 'dashboard' }" title="统计看板" aria-label="统计看板" data-view="dashboard" @click="$store.v2.go('dashboard')"><i :class="($store.v2.view === 'dashboard' ? 'ph-fill' : 'ph') + ' ph-chart-bar'"></i><span class="lbl">统计看板</span></button>
+      <button class="v2-navbtn" :class="{ on: $store.v2.view === 'settings' }" title="设置" aria-label="设置" data-view="settings" @click="$store.v2.go('settings')"><i :class="($store.v2.view === 'settings' ? 'ph-fill' : 'ph') + ' ph-gear-six'"></i><span class="lbl">设置</span></button>
+      <div class="sep"></div>
+      <button class="v2-accrow" :class="{ on: !$store.v2.acc }" title="全部账户" @click="$store.v2.setAcc('')"><span class="v2-acc">全</span><span class="lbl">全部账户</span></button>
+      <template x-for="a in $store.v2.accounts" :key="a.name">
+        <button class="v2-accrow" :class="{ on: $store.v2.acc === a.name }" :title="a.label" :aria-label="a.label" @click="$store.v2.setAcc(a.name)">
+          <span class="v2-acc" x-text="a.short"></span><span class="lbl" x-text="a.label"></span><span class="n" x-show="a.unread" x-text="a.unread"></span></button>
+      </template>
+
+    </aside>
+
+    <!-- ==================== 邮件视图：列表 + 阅读 + AI ==================== -->
+    <template x-if="$store.v2.isMailView">
+      <div style="flex:1;min-width:0;display:flex;position:relative">
+        <section class="v2-list" aria-label="邮件列表">
+          <div class="v2-accchips" x-show="$store.v2.phone" style="display:none" data-testid="accchips">
+            <button :class="{ on: !$store.v2.acc }" @click="$store.v2.setAcc('')">全部账户</button>
+            <template x-for="a in $store.v2.accounts" :key="'ac' + a.name"><button :class="{ on: $store.v2.acc === a.name }" @click="$store.v2.setAcc(a.name)">
+              <span x-text="String(a.label).split(' · ')[0]"></span><b x-show="a.unread" x-text="a.unread"></b></button></template>
+          </div>
+          <div class="v2-listhead">
+            <template x-if="!$store.v2.checked.length">
+              <div style="display:contents">
+                <div class="v2-titlerow">
+                  <h2 x-text="$store.v2.listTitle"></h2>
+                  <span class="cnt" x-text="$store.v2.view === 'triage' ? ($store.v2.tri.data ? $store.v2.triTodoCount + ' 件待你处理' : '读取中…') : $store.mail.loading && !$store.mail.emails.length ? '加载中…' : ($store.v2.view === 'drafts' ? ($store.mail.drafts || []).length + ' 封' : ($store.mail.totalCount ? $store.mail.totalCount + ' 封' : ''))"></span>
+                  <div class="v2-accdd" @click.outside="$store.v2.accMenu = false">
+                    <button class="acc" @click="$store.v2.accMenu = !$store.v2.accMenu" :title="$store.v2.accLabel" data-testid="acc-dd" :aria-expanded="$store.v2.accMenu">
+                      <span x-text="$store.v2.accLabel"></span><i class="ph ph-caret-down"></i></button>
+                    <div class="v2-menu" x-show="$store.v2.accMenu" style="display:none" data-testid="acc-menu">
+                      <button @click="$store.v2.accMenu = false; $store.v2.setAcc('')" :class="{ on: !$store.v2.acc }"><span class="grow">全部账户</span><span class="n" x-show="$store.v2.accUnreadAll" x-text="$store.v2.accUnreadAll"></span></button>
+                      <template x-for="a in $store.v2.accounts" :key="'dd' + a.name">
+                        <button @click="$store.v2.accMenu = false; $store.v2.setAcc(a.name)" :class="{ on: $store.v2.acc === a.name }"><span class="grow" x-text="a.label"></span><span class="n" x-show="a.unread" x-text="a.unread"></span></button>
+                      </template></div></div>
+                </div>
+                <div class="v2-seg filter" x-show="$store.v2.view !== 'drafts' && $store.v2.view !== 'triage'" role="radiogroup" aria-label="筛选">
+                  <template x-for="f in $store.v2.FILTERS" :key="f[0]">
+                    <button :class="{ on: $store.mail.filter === f[0] }" role="radio" :aria-checked="$store.mail.filter === f[0]" @click="$store.v2.setFilter(f[0])" x-text="f[1]"></button>
+                  </template>
+                </div>
+              </div>
+            </template>
+            <template x-if="$store.v2.checked.length">
+              <div style="display:contents">
+                <div class="v2-batch" data-testid="batchbar">
+                  <span class="n" x-text="'已选 ' + $store.v2.checked.length + ' 封'"></span>
+                  <button class="btn btn-ghost btn-icon" @click="$store.v2.archive()" title="归档 (E)" aria-label="归档"><i class="ph ph-archive"></i></button>
+                  <button class="btn btn-ghost btn-icon" @click="$store.v2.markRead()" title="标为已读" aria-label="标为已读"><i class="ph ph-envelope-open"></i></button>
+                  <button class="btn btn-ghost btn-icon" @click="$store.v2.star()" title="星标 (S)" aria-label="星标"><i class="ph ph-star"></i></button>
+                  <button class="btn btn-primary" @click="$store.v2.batchSumOpen = !$store.v2.batchSumOpen"><i class="ph ph-sparkle"></i>AI 汇总</button>
+                  <span style="flex:1"></span>
+                  <button class="btn btn-ghost" @click="$store.v2.selectAll()">全选</button>
+                  <button class="btn btn-ghost" @click="$store.v2.clearChecked()">取消</button>
+                </div>
+                <div class="v2-aiblock" x-show="$store.v2.batchSumOpen"><b>AI 汇总 · </b><span x-text="$store.v2.batchSumText"></span></div>
+              </div>
+            </template>
+            <div class="v2-scope" x-show="$store.v2.scope" data-testid="scope">
+              <i class="ph ph-sparkle"></i><span x-text="$store.v2.scopeText"></span>
+              <button @click="$store.v2.clearScope()" title="清除" aria-label="清除范围"><i class="ph ph-x"></i></button>
+            </div>
+          </div>
+
+          <!-- 草稿 -->
+          <div class="v2-rows" x-show="$store.v2.view === 'drafts'">
+            <template x-for="d in ($store.mail.drafts || [])" :key="'d' + d.id">
+              <div class="v2-row" @click="$store.v2.openDraft(d)">
+                <span class="v2-chk" style="visibility:hidden"></span>
+                <div class="v2-r1"><span class="v2-from" x-text="d.to || '(未填收件人)'"></span></div>
+                <div class="v2-r1r"><span class="v2-time" x-text="$store.v2.fmtTime(d.updated_at ? new Date(d.updated_at * 1000).toISOString() : '')"></span></div>
+                <div class="v2-r2"><span class="v2-subj" x-text="d.subject || '(无主题)'"></span>
+                  <i class="ph ph-trash v2-star" title="删除草稿" @click.stop="$store.mail.removeDraft(d.id)"></i></div>
+              </div>
+            </template>
+            <div class="v2-empty" x-show="!($store.mail.drafts || []).length"><div class="t">没有草稿</div><div class="d">写信时点「存草稿」会保存在这里。</div></div>
+          </div>
+
+          <!-- 邮件 -->
+          <!-- 今日分拣（P1-A）：分组 + 告警折叠 + 后台分析进度 + 加载/失败/清空三态 -->
+          <div class="v2-rows v2-tri" x-show="$store.v2.view === 'triage'" @scroll.passive="$store.v2.onListScroll($event)" data-testid="triage" :class="{ stale: !!$store.v2.tri.error && !!$store.v2.tri.data, 'show-chk': $store.v2.showChecks || $store.v2.checked.length }">
+            <div class="v2-trierr" x-show="$store.v2.tri.error" data-testid="tri-error" role="alert">
+              <i class="ph ph-warning-circle"></i><span x-text="$store.v2.tri.error + (($store.v2.tri.data) ? ' · 下面是 ' + $store.v2.triOkText + ' 的旧数据，暂不能操作' : '')"></span>
+              <button @click="$store.v2.loadTriage(true)">重试</button></div>
+            <template x-if="$store.v2.tri.loading && !$store.v2.tri.data">
+              <div data-testid="tri-skeleton"><template x-for="i in 6" :key="i"><div class="v2-skel"><span></span><span></span><span></span></div></template></div>
+            </template>
+            <template x-if="$store.v2.triProgress && $store.v2.triProgress.y > $store.v2.triProgress.x">
+              <div class="v2-triprog" data-testid="tri-progress">
+                <span x-text="'AI 已分析 ' + $store.v2.triProgress.x + '/' + $store.v2.triProgress.y + ($store.v2.triProgress.failed ? ' · ' + $store.v2.triProgress.failed + ' 封失败' : '')"></span>
+                <div class="bar"><i :style="'width:' + $store.v2.triProgress.pct + '%'"></i></div></div>
+            </template>
+            <template x-if="$store.v2.triCleared">
+              <div class="v2-tricleared" data-testid="tri-cleared"><i class="ph ph-check-circle"></i>
+                <div><b>要你处理的都清空了</b><span x-text="$store.v2.tri.done ? '本次完成并归档 ' + $store.v2.tri.done + ' 封' : '最近 7 天没有需要你处理或回复的邮件'"></span></div></div>
+            </template>
+            <template x-for="s in $store.v2.triSections" :key="s.key">
+              <div class="v2-trisec" :data-sec="s.key">
+                <button class="v2-trihd" :class="s.key" @click="$store.v2.triToggle(s.key)" :aria-expanded="s.open">
+                  <i class="ph" :class="s.open ? 'ph-caret-down' : 'ph-caret-right'"></i><b x-text="s.title"></b><span class="n" x-text="s.n"></span>
+                  <small x-text="s.hint"></small><span class="grow"></span>
+                  <template x-if="s.key === 'pending'"><span class="v2-linkbtn" @click.stop="$store.v2.triAnalyzeNow()" data-testid="tri-analyze">立即分析</span></template></button>
+                <template x-if="s.open"><div>
+                  <template x-for="it in s.items" :key="it.row.id">
+                    <div class="v2-swwrap" :class="{ swopen: $store.v2.sw.open === it.row.id }">
+                      <div class="v2-swacts" x-show="$store.v2.phone" @click.stop><button class="snz" @click="$store.v2.swSnooze(it.row.id)" data-testid="sw-snooze"><i class="ph ph-alarm"></i>稍后</button>
+                        <button class="done" @click="$store.v2.swDone(it.row.id)" data-testid="sw-done"><i class="ph ph-check-circle"></i>完成</button></div>
+                    <div class="v2-row" :class="{ sel: it.row.id === $store.mail.selectedId, open: $store.v2.isOpen(it.row), unread: it.row.unread, member: it.member }" :data-email-id="it.row.id" @click="$store.v2.swTap($event, it.row.id) || $store.v2.open(it.row.id)" @touchstart.passive="$store.v2.swStart($event, it.row.id)" @touchmove="$store.v2.swMove($event)" @touchend="$store.v2.swEnd()" :style="$store.v2.swStyle(it.row.id)">
+                      <span class="v2-chk" :class="{ on: $store.v2.isChecked(it.row.id) }" title="选择 (X)" role="checkbox" :aria-checked="$store.v2.isChecked(it.row.id)" @click.stop="$store.v2.check(it.row.id)">
+                        <i class="ph ph-check" x-show="$store.v2.isChecked(it.row.id)"></i></span>
+                      <div class="v2-r1">
+                        <span class="v2-dot"></span>
+                        <span class="v2-from" x-text="it.row.sender || it.row.sender_email || '(未知发件人)'"></span>
+                        <i class="ph ph-shield-warning" x-show="$store.v2.isPhish(it.row)" title="外部邮件 · 谨防钓鱼"></i>
+                        <i class="ph ph-paperclip" x-show="it.row.has_attachment"></i>
+                      </div>
+                      <div class="v2-r1r">
+                        <template x-if="it.row.due"><span class="tag v2-due" :class="{ late: $store.v2.dueLate(it.row.due) }" x-text="$store.v2.fmtDue(it.row.due)" :title="it.row.due_src ? '依据：' + it.row.due_src : ''"></span></template>
+                        <template x-if="it.cluster"><button class="tag v2-alert" :class="it.cluster.state" @click.stop="$store.v2.triToggleCluster(it.cluster.key)" data-testid="tri-cluster"
+                          x-text="(it.cluster.state === 'alerting' ? '告警中 · ' : it.cluster.state === 'resolved' ? '已恢复 · ' : '') + it.cluster.n + ' 封'"></button></template>
+                        <template x-if="it.row.reminded"><span class="tag v2-remind" :title="'稍后提醒 ' + $store.v2.fmtSnz(it.row.reminded) + ' 到期'" data-testid="tri-reminded">提醒</span></template>
+                        <template x-if="it.row.series_n"><span class="tag tag-outline" x-text="'系列 · ' + it.row.series_n + ' 期'" data-testid="row-series"></span></template>
+                        <template x-if="it.row.old"><span class="tag tag-outline" title="超过 7 天，但还有未完成的待办">较早</span></template>
+                        <span class="v2-time" x-text="$store.v2.fmtTime(it.row.time)"></span>
+                      </div>
+                      <div class="v2-r2">
+                        <span class="v2-subj" x-text="it.row.subject || '(无主题)'"></span>
+                        <template x-if="it.cluster && $store.v2.tri.openClusters[it.cluster.key]">
+                          <span class="v2-clacts"><button class="v2-linkbtn" @click.stop="$store.v2.addTodo(it.row)">加入待办</button>
+                            <button class="v2-linkbtn" @click.stop="$store.v2.triArchiveCluster(it.cluster)" data-testid="tri-cluster-archive">整组归档</button>
+                            <button class="v2-linkbtn" @click.stop="$store.v2.openMute(it.row)" data-testid="tri-cluster-mute">静音 7 天</button></span></template>
+                        <i class="v2-star" :class="it.row.starred ? 'ph-fill ph-star on' : 'ph ph-star'" title="星标 (S)" @click.stop="$store.v2.starOne(it.row)"></i>
+                      </div>
+                      <div class="sum" :class="{ next: !!it.row.next }" x-show="$store.v2.rowSum(it.row)" x-text="$store.v2.rowSum(it.row)"></div>
+                    </div>
+                    </div>
+                  </template>
+                </div></template>
+              </div>
+            </template>
+            <template x-if="$store.v2.triMuted.length">
+              <div class="v2-trimuted" data-testid="tri-muted">
+                <button class="v2-trihd" @click="$store.v2.tri.mutedOpen = !$store.v2.tri.mutedOpen"><i class="ph" :class="$store.v2.tri.mutedOpen ? 'ph-caret-down' : 'ph-caret-right'"></i>
+                  <i class="ph ph-bell-slash"></i><b x-text="'已静音 ' + $store.v2.triMuted.length + ' 组'"></b><span class="n" x-text="$store.v2.triMuted.reduce((s, c) => s + c.ids.length, 0) + ' 封'"></span></button>
+                <template x-if="$store.v2.tri.mutedOpen"><div>
+                  <template x-for="c in $store.v2.triMuted" :key="'m' + c.key">
+                    <div class="it"><span class="t" x-text="(c.mute_scope === 'sender' ? '全部告警 · ' : '') + c.sender + ' · ' + c.subject"></span>
+                      <small x-text="c.ids.length + ' 封 · 至 ' + $store.v2.fmtSnz(c.mute_until)"></small>
+                      <button class="v2-linkbtn" @click="$store.v2.unmute(c)" data-testid="unmute">取消静音</button></div>
+                  </template></div></template>
+              </div>
+            </template>
+          </div>
+          <div class="v2-rows" :class="{ 'show-chk': $store.v2.showChecks || $store.v2.checked.length }" x-show="$store.v2.view !== 'drafts' && $store.v2.view !== 'triage'" @scroll.passive="$store.v2.onListScroll($event)" data-testid="rows">
+            <template x-for="e in $store.mail.emails" :key="e.id">
+              <div class="v2-swwrap" :class="{ swopen: $store.v2.sw.open === e.id }">
+                      <div class="v2-swacts" x-show="$store.v2.phone" @click.stop><button class="snz" @click="$store.v2.swSnooze(e.id)" data-testid="sw-snooze"><i class="ph ph-alarm"></i>稍后</button>
+                        <button class="done" @click="$store.v2.swDone(e.id)" data-testid="sw-done"><i class="ph ph-check-circle"></i>完成</button></div>
+              <div class="v2-row" :class="{ sel: e.id === $store.mail.selectedId, open: $store.v2.isOpen(e), unread: e.unread }" :data-email-id="e.id" @click="$store.v2.swTap($event, e.id) || $store.v2.open(e.id)" @touchstart.passive="$store.v2.swStart($event, e.id)" @touchmove="$store.v2.swMove($event)" @touchend="$store.v2.swEnd()" :style="$store.v2.swStyle(e.id)">
+                <span class="v2-chk" :class="{ on: $store.v2.isChecked(e.id) }" title="选择 (X)" role="checkbox" :aria-checked="$store.v2.isChecked(e.id)" @click.stop="$store.v2.check(e.id)">
+                  <i class="ph ph-check" x-show="$store.v2.isChecked(e.id)"></i></span>
+                <div class="v2-r1">
+                  <span class="v2-dot"></span>
+                  <span class="v2-from" x-text="e.sender || e.sender_email || '(未知发件人)'"></span>
+                  <i class="ph ph-shield-warning" x-show="$store.v2.isPhish(e)" title="外部邮件 · 谨防钓鱼"></i>
+                  <i class="ph ph-paperclip" x-show="e.has_attachment"></i>
+                  <i class="ph ph-notepad" x-show="e.note_count" :title="'有 ' + e.note_count + ' 条处理记录'" data-testid="row-note"></i>
+                </div>
+                <div class="v2-r1r">
+                  <template x-if="$store.v2.priTag(e)"><span class="tag" :class="$store.v2.priTag(e).cls" x-text="$store.v2.priTag(e).label"></span></template>
+                  <template x-if="$store.v2.isNoAction(e)"><span class="tag v2-tag-done">无需处理</span></template>
+                  <template x-if="e.semantic"><span class="tag tag-outline" title="关键词没命中，按语义相近补充" data-testid="row-semantic">语义相近</span></template>
+                  <template x-if="e.note_hit"><span class="tag tag-outline" title="命中的是处理记录（完成说明）">处理记录</span></template>
+                  <template x-if="e.series_n && e.series_idx === e.series_n"><span class="tag tag-outline" x-text="'系列 · ' + e.series_n + ' 期'" data-testid="row-series"></span></template>
+                  <template x-if="e.snooze_until"><span class="tag tag-outline" x-text="'稍后 ' + $store.v2.fmtSnz(e.snooze_until)" :title="'到点前不出现在今日分拣'" data-testid="row-snooze"></span></template>
+                  <span class="v2-time" x-text="$store.v2.fmtTime(e.time)"></span>
+                </div>
+                <div class="v2-r2">
+                  <span class="v2-subj" x-text="e.subject || '(无主题)'"></span>
+                  <i class="v2-star" :class="e.starred ? 'ph-fill ph-star on' : 'ph ph-star'" title="星标 (S)" @click.stop="$store.v2.starOne(e)"></i>
+                </div>
+                <div class="sum" x-show="$store.v2.rowSum(e)" x-text="$store.v2.rowSum(e)"></div>
+              </div>
+              </div>
+            </template>
+            <div class="v2-more" x-show="$store.mail.loading && $store.mail.emails.length">加载中…</div>
+            <div class="v2-empty" x-show="!$store.mail.loading && !$store.mail.emails.length" data-testid="empty">
+              <div class="t" x-text="$store.v2.emptyTitle"></div><div class="d" x-text="$store.v2.emptyText"></div>
+            </div>
+          </div>
+        </section>
+        <div class="v2-vdiv"></div>
+
+        <!-- ==================== 阅读区 ==================== -->
+        <!-- x-show 而非 x-if：emailDetail 组件需常驻，它对 selectedId 的 watch 才能在首次选中时触发摘要 -->
+        <article class="v2-reader" x-data="emailDetail" x-show="$store.mail.currentEmail && $store.v2.view !== 'drafts'" aria-label="邮件内容">
+            <div class="v2-readbar" :class="{ 'ph-open': $store.v2.phoneMore }">
+              <button class="btn btn-ghost btn-icon v2-back" x-show="$store.v2.onePane" @click="$store.v2.backToList()" title="返回列表" aria-label="返回列表" data-testid="back"><i class="ph ph-arrow-left"></i></button>
+              <button class="btn btn-ghost txt" @click="$store.v2.reply(false)" title="回复 (R)"><i class="ph ph-arrow-bend-up-left"></i>回复</button>
+              <button class="btn btn-ghost txt" @click="$store.v2.reply(true)" title="回复全部"><i class="ph ph-arrow-bend-double-up-left"></i>全部</button>
+              <button class="btn btn-ghost txt" @click="$store.v2.forward()" title="转发"><i class="ph ph-arrow-bend-up-right"></i>转发</button>
+              <span class="vsep"></span>
+              <button class="btn btn-ghost btn-icon" @click="$store.v2.archive()" :title="$store.v2.view === 'archive' ? '移回收件箱 (E)' : '归档 (E)'" aria-label="归档"><i class="ph ph-archive"></i></button>
+              <button class="btn btn-ghost btn-icon" @click="$store.v2.star()" title="星标 (S)" aria-label="星标">
+                <i :class="email && email.starred ? 'ph-fill ph-star' : 'ph ph-star'" :style="email && email.starred ? 'color:var(--color-accent-300)' : ''"></i></button>
+              <button class="btn btn-ghost btn-icon" @click="$store.v2.toggleUnread()" title="标为未读 (U)" aria-label="标为未读"><i class="ph ph-envelope-simple"></i></button>
+              <button class="btn btn-ghost btn-icon" @click="$store.v2.addTodo()" title="加入待办 (T)" aria-label="加入待办"><i class="ph ph-check-square"></i></button>
+              <button class="btn btn-ghost btn-icon" @click="$store.v2.openSnooze([$store.mail.currentEmail.id])" title="稍后提醒 (H)" aria-label="稍后提醒" data-testid="snz-btn"><i class="ph ph-alarm"></i></button>
+              <span class="grow"></span>
+              <button class="btn btn-ghost txt" x-show="$store.v2.ctxDrawer" @click="$store.v2.toggleCtx()" :class="{ on: $store.v2.ctxOpen }" title="同话题、该发件人往来、相关待办" data-testid="ctx-btn">上下文 ›</button>
+              <button class="btn btn-ghost btn-icon" @click="$store.v2.trash()" title="删除（同时在邮件服务器删除）" aria-label="删除"><i class="ph ph-trash"></i></button>
+            </div>
+            <div class="v2-loading" x-show="loading && !email">正在打开…</div>
+            <template x-if="email">
+              <div class="v2-doc">
+                <h1 x-text="email.subject || '(无主题)'"></h1>
+                <div class="v2-fromrow">
+                  <span class="v2-avatar" x-text="$store.v2.initial(email)"></span>
+                  <div class="who">
+                    <div class="l1"><b x-text="$store.v2.who(email)" :title="email.sender_email"></b></div>
+                    <div class="l2"><span x-text="'发给 ' + email.account + ' · ' + $store.v2.fmtDate(email.time)"></span>
+                      <button x-show="hasRecipientInfo" @click="toggleRecipients()" x-text="recipientsOpen ? ' 收起' : ' 详情'"></button></div>
+                  </div>
+                </div>
+                <div class="v2-rcpt" x-show="recipientsOpen">
+                  <div x-show="toList.length">收件人：<span x-text="toList.map(a => a.name ? a.name + ' <' + a.email + '>' : a.email).join('、')"></span></div>
+                  <div x-show="ccList.length">抄送：<span x-text="ccList.map(a => a.name ? a.name + ' <' + a.email + '>' : a.email).join('、')"></span></div>
+                  <div>账户：<span x-text="email.account"></span><template x-if="email.folder"><span x-text="' · 文件夹：' + email.folder"></span></template></div>
+                </div>
+                <!-- 处理记录（完成说明）：复盘用 -->
+                <template x-if="$store.v2.notes.id === email.id && $store.v2.notes.list.length">
+                  <div class="v2-notes" data-testid="notes">
+                    <div class="k"><i class="ph ph-notepad"></i>处理记录</div>
+                    <template x-for="n in $store.v2.notes.list" :key="n.id">
+                      <div class="v2-note">
+                        <div class="top"><span class="tag tag-neutral" x-show="n.outcome" x-text="n.outcome"></span><small x-text="$store.v2.fmtDate(new Date(n.created_at * 1000).toISOString())"></small>
+                          <span class="grow"></span><button class="v2-linkbtn" @click="$store.v2.openNoteEdit(n)">编辑</button><button class="v2-linkbtn" @click="$store.v2.deleteNote(n)">删除</button></div>
+                        <div class="body" x-show="n.note_html" x-html="$store.v2._safeHtml(n.note_html)"></div>
+                        <div class="v2-natts" x-show="n.attachments.length"><template x-for="a in n.attachments" :key="a.name">
+                          <a class="v2-chip ghost" :href="$store.v2.noteAttUrl(n, a)" download><i class="ph ph-paperclip"></i><span x-text="a.name + ' · ' + $store.v2.fmtSize(a.size)"></span></a></template></div>
+                        <div class="v2-natts" x-show="n.links.length"><template x-for="l in n.links" :key="l.id">
+                          <button class="v2-chip ghost" @click="$store.v2.ctxGo(l)"><i class="ph ph-link-simple"></i><span x-text="l.subject"></span></button></template></div>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <!-- AI 简报：结论与动作在这里；右栏只放上下文 -->
+                <template x-if="$store.v2.brief">
+                  <div class="v2-brief" :class="'p-' + $store.v2.brief.cls + ' st-' + $store.v2.brief.state" data-testid="brief" :data-state="$store.v2.brief.state">
+                    <div class="top">
+                      <span class="tag" :class="$store.v2.brief.cls === 'act' ? 'v2-tag-act' : 'tag-neutral'" x-text="$store.v2.brief.pri" data-testid="brief-pri"></span>
+                      <template x-if="$store.v2.brief.due"><span class="tag v2-due" :class="{ late: $store.v2.dueLate($store.v2.brief.due) }" x-text="$store.v2.fmtDue($store.v2.brief.due)"></span></template>
+                      <small class="src" x-show="$store.v2.brief.dueSrc" x-text="'依据「' + $store.v2.brief.dueSrc + '」'"></small>
+                      <span class="grow"></span>
+                      <small class="when" x-text="'AI 简报' + ($store.v2.brief.when ? ' · ' + $store.v2.brief.when : '')"></small>
+                      <button class="v2-linkbtn" @click="$store.v2.reanalyze()" :disabled="$store.v2.insight.loading" data-testid="reanalyze"
+                              x-text="$store.v2.brief.stale ? '邮件已更新，重新分析' : '重新分析'"></button>
+                    </div>
+                    <!-- A 分析中：骨架，正文照常可读 -->
+                    <template x-if="$store.v2.brief.state === 'loading'">
+                      <div><div class="v2-bskel"><span></span><span></span></div>
+                        <div class="v2-aistat" data-testid="insight-loading">正在分析… 正文可以照常阅读；切到下一封不中断，回来直接显示结果。</div></div>
+                    </template>
+                    <!-- B 失败：不显示成无需处理 -->
+                    <template x-if="$store.v2.brief.state === 'failed'">
+                      <div data-testid="brief-failed"><div class="sum">这封邮件还没有分析结果</div>
+                        <div class="meta" x-text="($store.v2.brief.error || 'AI 服务本次未返回结果') + '。不会把失败显示成「无需处理」。'"></div>
+                        <div class="acts"><button class="btn btn-ghost" @click="$store.v2.reanalyze()"><i class="ph ph-arrow-clockwise"></i>重试</button>
+                          <button class="btn btn-ghost" @click="$store.v2.openTodoDlg()"><i class="ph ph-check-square"></i>手动加入待办</button></div></div>
+                    </template>
+                    <template x-if="['ok', 'partial', 'done', 'none'].includes($store.v2.brief.state)">
+                      <div>
+                        <div class="sum" x-text="$store.v2.brief.headline" data-testid="brief-headline"></div>
+                        <!-- 关键信息（AI 提取的「键：值」）与要点；行动项与待办操作在右栏「行动」 -->
+                        <dl class="v2-facts" x-show="$store.v2.brief.facts.length" data-testid="brief-meta">
+                          <template x-for="(f, i) in $store.v2.brief.facts" :key="'fa' + i"><div :class="{ wide: !f.k }"><dt x-show="f.k" x-text="f.k"></dt><dd x-text="f.v"></dd></div></template></dl>
+                        <ul class="v2-points" x-show="$store.v2.brief.points.length" data-testid="brief-points">
+                          <template x-for="(p, i) in $store.v2.brief.points" :key="'pt' + i"><li x-text="p"></li></template></ul>
+                        <div class="none" x-show="$store.v2.brief.state === 'done'" data-testid="brief-alldone"><i class="ph ph-check-circle"></i>行动项都处理完了，这封已移出「需要你处理」；可以完成并归档。</div>
+                        <button class="v2-actshint" x-show="$store.v2.brief.actions.length" @click="$store.v2.openActs()" data-testid="brief-actshint">
+                          <i class="ph ph-list-checks"></i><span x-text="$store.v2.actHint"></span><i class="ph ph-caret-right" x-show="$store.v2.ctxDrawer"></i></button>
+                        <div class="next" x-show="$store.v2.brief.next && !$store.v2.brief.actions.length" x-text="'下一步：' + $store.v2.brief.next" data-testid="brief-next"></div>
+                        <!-- C 无需行动 -->
+                        <template x-if="$store.v2.brief.state === 'none'">
+                          <div class="none" data-testid="brief-none"><span x-text="$store.v2.brief.noAct ? '已停止从这类邮件提取待办。' : '这封邮件不需要你处理。'"></span>
+                            <button class="v2-linkbtn" x-show="!$store.v2.brief.noAct" @click="$store.v2.markWrong()" data-testid="brief-wrong">判断有误，我要处理</button></div>
+                        </template>
+                      </div>
+                    </template>
+                    <div class="acts">
+                      <button class="btn btn-ghost" x-show="$store.v2.brief.link" @click="$store.v2.briefOpenLink()" :title="$store.v2.brief.link" data-testid="brief-link"><i class="ph ph-arrow-square-out"></i>
+                        <span x-text="'打开 ' + $store.v2.linkHost($store.v2.brief.link)"></span></button>
+                      <button class="btn btn-ghost" x-show="$store.v2.brief.alertRow" @click="$store.v2.openMute($store.v2.brief.alertRow)" data-testid="brief-mute"><i class="ph ph-bell-slash"></i>静音 7 天</button>
+                      <button class="btn btn-ghost" @click="$store.v2.briefDone()" data-testid="brief-done" :title="'快捷键 E'"><i class="ph ph-check-circle"></i><span x-text="$store.v2.brief.state === 'none' ? '归档' : '完成并归档'"></span> <kbd>E</kbd></button>
+                    </div>
+                  </div>
+                </template>
+                <div class="v2-warn" x-show="!!$store.v2.warnExternal(email)" data-testid="ext-warn">
+                  <i class="ph ph-shield-warning"></i><span x-text="$store.v2.warnExternal(email)"></span></div>
+                <div class="v2-modebar">
+                  <i class="ph ph-book-open"></i>
+                  <span x-text="(viewOriginal ? '原始样式' : '阅读模式') + (remoteBlocked ? ' · 已拦截 ' + remoteBlocked + ' 处外部图片/跟踪资源' : '')"></span>
+                  <button x-show="remoteBlocked" @click="loadRemoteImages()">显示图片</button>
+                  <button x-show="remoteBlocked && senderDomain" @click="trustSenderDomain()" x-text="'始终信任 ' + senderDomain"></button>
+                  <button x-show="isHtml" @click="$store.v2.setReaderMode(viewOriginal ? 'clean' : 'original')" data-testid="reader-toggle"
+                          :title="viewOriginal ? '统一字体与行距，适合连续阅读' : '按邮件自带的样式显示（与 Outlook 接近）；选择会被记住'"
+                          x-text="viewOriginal ? '回到阅读模式' : '查看原始样式'"></button>
+                </div>
+                <div class="v2-atts" x-show="attachmentList.length">
+                  <template x-for="a in attachmentList" :key="a">
+                    <button class="v2-att" @click="downloadAttachment(a)" :title="'下载 ' + a"><i class="ph" :class="downloading === a ? 'ph-spinner v2-spin' : 'ph-paperclip'"></i><span x-text="a"></span></button>
+                  </template>
+                </div>
+                <div class="v2-warn" x-show="remoteBlocked && String(email.body || '').trim().length < 40" data-testid="imgonly">
+                  <i class="ph ph-image"></i><span>这封邮件的内容主要是图片，已按阅读模式拦截。</span>
+                  <button style="color:var(--color-accent-300);font-size:13px" @click="loadRemoteImages()">显示图片</button></div>
+                <template x-if="!viewOriginal">
+                  <div class="v2-prose clean" :class="isHtml ? '' : 'plain'" x-html="sanitizedBody" data-testid="prose"></div>
+                </template>
+                <!-- 原始样式：沙箱 iframe（不给 allow-scripts / allow-forms / allow-top-navigation），文档由 sanitizeEmailDoc 生成 -->
+                <template x-if="viewOriginal">
+                  <div class="v2-prose orig" data-testid="prose-orig">
+                    <iframe class="v2-frame" title="邮件正文（原始样式）" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+                            referrerpolicy="no-referrer" x-effect="mountFrame($el, frameDoc)" data-testid="prose-frame"></iframe>
+                  </div>
+                </template>
+                <button class="v2-quick" x-show="!($store.v2.compose && $store.v2.compose.inline && $store.v2.compose.srcId === email.id)" @click="$store.v2.reply(false)"><i class="ph ph-arrow-bend-up-left"></i>
+                  <span x-text="$store.v2.quickReplyText(email)"></span><kbd>R</kbd></button>
+                <!-- 内嵌回复框（P1-D）：AI 草稿标签点选填入；引用原文发送时自动附上，这里默认折叠；更多编辑点「展开」 -->
+                <template x-if="$store.v2.compose && $store.v2.compose.inline && $store.v2.compose.srcId === email.id">
+                  <div class="v2-compose v2-inline" data-testid="inline-reply">
+                    <div class="hd"><b x-text="$store.v2.compose.mode === 'reply-all' ? '回复全部' : '回复'"></b>
+                      <span class="to" x-text="$store.v2.compose.to + ($store.v2.compose.cc ? '；抄送 ' + $store.v2.compose.cc : '')"></span><span class="grow"></span>
+                      <small class="saved" x-text="$store.v2.composeSaved"></small>
+                      <button class="v2-linkbtn" @click="$store.v2.expandCompose()" data-testid="inline-expand" title="改收件人、加附件、富文本">展开</button></div>
+                    <div class="chips" data-testid="drafts">
+                      <template x-for="(d, i) in $store.v2.paneDrafts" :key="i + d.tone">
+                        <button class="v2-chip" @click="$store.v2.useDraft(d)" :title="d.text" x-text="d.tone"></button></template>
+                      <button class="v2-chip ghost" @click="$store.v2.useDraft(null)">自己写</button>
+                      <span class="muted" x-show="!$store.v2.paneDrafts.length" x-text="$store.v2.insight.loading ? 'AI 正在准备草稿…' : ''"></span></div>
+                    <div class="v2-ied" contenteditable="true" data-cfield="body" role="textbox" aria-multiline="true" aria-label="回复正文"
+                         data-placeholder="写回复…（⌘↵ 发送，Esc 离开输入）" x-init="$el.innerHTML = $store.v2.compose.body || ''; $nextTick(() => $el.focus())"
+                         @input="$store.v2.compose.body = $el.innerHTML" @blur="$store.v2.compose.body = $el.innerHTML; $store.v2._autosave()"></div>
+                    <div class="quote"><button class="v2-linkbtn" @click="$store.v2.quoteOpen = !$store.v2.quoteOpen" data-testid="quote-toggle">
+                        <i class="ph" :class="$store.v2.quoteOpen ? 'ph-caret-down' : 'ph-caret-right'"></i>引用原文（发送时自动附上）</button>
+                      <pre x-show="$store.v2.quoteOpen" x-text="$store.v2.quoteText" data-testid="quote"></pre></div>
+                    <div class="ft">
+                      <span class="v2-aitools"><template x-for="k in ['更正式', '更简短', '译为英文']" :key="k">
+                        <button @click="$store.v2.composeAi(k)" x-text="k"></button></template></span>
+                      <span class="busy" x-text="$store.v2.aiBusyText"></span><span class="grow"></span>
+                      <button class="btn btn-ghost" @click="$store.v2.discard()">丢弃</button>
+                      <template x-if="!$store.v2.sendBlocked">
+                        <button class="btn btn-primary" @click="$store.v2.send()" data-testid="inline-send"><i class="ph ph-paper-plane-tilt"></i>发送 <span style="font-size:11px;opacity:0.7">⌘↵</span></button></template>
+                      <template x-if="$store.v2.sendBlocked">
+                        <span class="v2-sendoff" data-testid="send-blocked"><button class="btn btn-primary" disabled aria-disabled="true"><i class="ph ph-prohibit"></i>发送未开放</button>
+                          <button class="v2-linkbtn" @click="$store.v2.openFullApp()">在 Quillbox 中发送 ›</button></span></template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </article>
+        <!-- ==================== 右侧上下文栏（§10：右侧只放上下文）：宽屏常驻；<1440 由「上下文 ›」打开为抽屉 ==================== -->
+        <template x-if="$store.mail.currentEmail && $store.v2.view !== 'drafts' && (!$store.v2.ctxDrawer || $store.v2.ctxOpen)">
+          <aside class="v2-side" :class="{ drawer: $store.v2.ctxDrawer }" aria-label="上下文" data-testid="side">
+            <section class="v2-ctx" data-testid="ctx" aria-label="上下文">
+              <div class="v2-sidehd"><b>上下文</b><span class="grow"></span>
+                <div class="v2-more" @click.outside="$store.v2.sideMenu = false">
+                  <button class="v2-iconbtn" @click="$store.v2.sideMenu = !$store.v2.sideMenu" title="更多" aria-label="更多" data-testid="side-more"><i class="ph ph-dots-three"></i></button>
+                  <div class="v2-menu" x-show="$store.v2.sideMenu" style="display:none">
+                    <button x-show="!$store.v2.isNoAction($store.mail.currentEmail)" @click="$store.v2.sideMenu = false; $store.v2.openNoAction()" data-testid="noact-pane"><i class="ph ph-hand-palm"></i>停止从这类邮件提取待办…</button>
+                    <button x-show="$store.v2.isNoAction($store.mail.currentEmail)" @click="$store.v2.sideMenu = false; $store.v2.openNoAction()"><i class="ph ph-arrow-counter-clockwise"></i>恢复提取（取消无需处理）</button>
+                    <button @click="$store.v2.sideMenu = false; $store.mail.extractTodosFor($store.mail.currentEmail.id, true)"><i class="ph ph-sparkle"></i>让 AI 重新提取待办</button>
+                  </div>
+                </div>
+                <button class="v2-iconbtn" x-show="$store.v2.ctxDrawer" @click="$store.v2.ctxOpen = false" title="关闭 (Esc)" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+              <div class="bd">
+                <div class="v2-sec" data-testid="ctx-todos"><div class="k"><span x-text="'行动' + ($store.v2.ctxActs.length ? ' · ' + $store.v2.ctxActs.length + ' 项' : '')"></span>
+                    <button x-show="$store.v2.brief && $store.v2.brief.left > 1" @click="$store.v2.addAllActs()" data-testid="acts-addall">全部加入待办</button></div>
+                  <div class="v2-acts side" x-show="$store.v2.ctxActs.length" data-testid="brief-actions">
+                    <template x-for="(a, i) in $store.v2.ctxActs" :key="i + a.text">
+                      <div class="v2-arow" :class="{ added: !!a.todo, notmine: !a.todo && a.notMine }">
+                        <template x-if="!a.todo && !a.notMine"><button class="main" @click="$store.v2.openTodoDlg($store.mail.currentEmail, a.text)" :title="'加入待办 · 负责人：' + (a.owner || '纪要未写明')" data-testid="act-add">
+                          <i class="ph ph-plus-circle"></i><span class="t" x-text="a.text"></span><small x-show="$store.v2.actOwner(a)" x-text="$store.v2.actOwner(a)"></small></button></template>
+                        <template x-if="!a.todo && a.notMine"><button class="main" @click="$store.v2.setNotMine(a, false)" title="已标为不是你的，点击撤销" data-testid="act-undo">
+                          <i class="ph ph-minus-circle"></i><span class="t" x-text="a.text"></span><small>撤销</small></button></template>
+                        <template x-if="a.todo"><button class="main" @click="$store.v2.go('todos')" title="已在待办，点击打开待办" data-testid="act-added">
+                          <i class="ph ph-check-circle"></i><span class="t" x-text="a.text"></span><small x-text="a.todo.due_date ? $store.v2.fmtDue(a.todo.due_date) : '已加入'"></small></button></template>
+                        <button class="x" x-show="!a.todo && !a.notMine" @click="$store.v2.setNotMine(a, true)" title="不是我的" aria-label="不是我的" data-testid="act-notmine"><i class="ph ph-x"></i></button>
+                      </div>
+                    </template>
+                  </div>
+                  <template x-for="t in $store.v2.ctxOtherTodos" :key="'t' + t.id">
+                    <div class="v2-ctxtodo" :class="{ done: t.status === 'done' }"><button class="ck" @click="$store.mail.toggleTodo(t.id)" :aria-label="t.status === 'done' ? '标为未完成' : '标为完成'"><i class="ph ph-check" x-show="t.status === 'done'"></i></button>
+                      <span x-text="t.content"></span><small x-text="t.due_date ? $store.v2.fmtDue(t.due_date) : ''"></small></div></template>
+                  <button class="v2-sbtn" x-show="$store.v2.brief && $store.v2.brief.state !== 'none' && $store.v2.brief.state !== 'failed' && $store.v2.brief.state !== 'loading' && !$store.v2.brief.noAct && !$store.v2.brief.actions.length"
+                          @click="$store.v2.briefTodo()" data-testid="brief-todo"><i class="ph ph-check-square"></i><span x-text="'整封加入待办' + ($store.v2.brief && $store.v2.brief.due ? '（' + $store.v2.fmtDue($store.v2.brief.due) + '）' : '')"></span></button>
+                  <div class="none" x-show="!$store.v2.ctxActs.length && !$store.v2.ctxOtherTodos.length && !($store.v2.brief && ['ok', 'partial'].includes($store.v2.brief.state))"
+                       x-text="$store.v2.isNoAction($store.mail.currentEmail) ? '已停止从这类邮件提取待办。' : ($store.v2.insight.loading ? '分析中…' : '没有需要你做的事。往期加入过的行动会在这里显示完成情况。')"></div></div>
+                <div class="v2-sec" x-show="$store.v2.notes.back.length" data-testid="ctx-noteback"><div class="k">在这些处理记录里被引用</div>
+                  <template x-for="x in $store.v2.notes.back" :key="'nb' + x.note_id">
+                    <button class="v2-ctxmail" @click="$store.v2.ctxGo({ id: x.email_id, subject: x.subject, sender: x.sender, time: x.time })"><span class="w" x-text="(x.outcome || '处理记录') + ' · ' + x.sender"></span><span class="s" x-text="x.subject"></span><small x-text="$store.v2.fmtTime(x.time)"></small></button></template></div>
+                <div class="v2-sec" x-show="$store.v2.series.key" data-testid="ctx-series"><div class="k">系列</div>
+                  <div class="v2-who"><b x-text="$store.v2.seriesTitle"></b><small x-text="$store.v2.series.n + ' 期 · 列表里只保留最新一期'"></small></div>
+                  <div class="v2-sdates" data-testid="series-dates"><template x-for="x in $store.v2.seriesChips" :key="x.k"><span class="v2-sitem">
+                    <template x-if="!x.gap"><button class="v2-sdate" :class="{ on: $store.mail.currentEmail && x.it.id === $store.mail.currentEmail.id, unread: x.it.unread }" @click="$store.v2.seriesGo(x.it)"
+                            x-text="$store.v2.seriesDateY(x.it)" :title="x.it.headline || x.it.subject" data-testid="series-date"></button></template>
+                    <template x-if="x.gap"><span class="v2-sgap" x-text="x.gap" data-testid="series-gap"></span></template></span></template></div>
+                  <div class="v2-chgentry" x-show="$store.v2.chg.id && !$store.v2.chg.none" data-testid="chg-entry">
+                    <button class="v2-sbtn primary" @click="$store.v2.chgOpen()" data-testid="chg-open"><i class="ph ph-git-diff"></i><span x-text="$store.v2.chgEntryLabel"></span><i class="ph ph-caret-right"></i></button>
+                    <small class="v2-shint" x-text="$store.v2.chgTeaser" data-testid="chg-teaser"></small></div>
+                  <div class="v2-sacts" x-show="$store.v2.seriesBack.length">
+                    <button class="v2-sbtn" @click="$store.v2.seriesReturn()" data-testid="series-back"><i class="ph ph-arrow-u-up-left"></i><span x-text="'返回 ' + ($store.v2.seriesBack.length ? $store.v2.seriesDateY($store.v2.seriesBack[$store.v2.seriesBack.length - 1]) : '')"></span></button></div>
+                  <button class="v2-sbtn ghost" @click="$store.v2.splitSeries()" data-testid="series-split"><i class="ph ph-scissors"></i>不是同一系列？拆开</button></div>
+                <div class="v2-sec" x-show="!$store.v2.series.key" data-testid="ctx-thread"><div class="k">同一话题 <button x-show="$store.v2.thread.count > 1" @click="$store.v2.openThread()">在列表中查看</button></div>
+                  <template x-for="x in $store.v2.ctx.thread" :key="'h' + x.id">
+                    <button class="v2-ctxmail" @click="$store.v2.ctxGo(x)"><span class="w" x-text="$store.v2.who(x)"></span><span class="s" x-text="x.subject"></span><small x-text="$store.v2.fmtTime(x.time)"></small></button></template>
+                  <div class="none" x-show="!$store.v2.ctx.loading && !$store.v2.ctx.thread.length">没有同话题的往来</div></div>
+                <div class="v2-sec" data-testid="ctx-sender"><div class="k">发件人</div>
+                  <div class="v2-who"><b x-text="$store.v2.who($store.mail.currentEmail)"></b><small x-text="$store.mail.currentEmail.sender_email"></small></div>
+                  <div class="k2">近 30 天来信</div>
+                  <template x-for="x in $store.v2.ctx.sender" :key="'f' + x.id">
+                    <button class="v2-ctxmail" @click="$store.v2.ctxGo(x)"><span class="s" x-text="x.subject"></span><small x-text="$store.v2.fmtTime(x.time)"></small></button></template>
+                  <div class="none" x-show="!$store.v2.ctx.loading && !$store.v2.ctx.sender.length">近 30 天没有其他来信</div>
+                  <div class="none" x-show="$store.v2.ctx.loading">读取中…</div></div>
+              </div>
+            </section>
+          </aside>
+        </template>
+        <div class="v2-readempty" x-show="!$store.mail.currentEmail || $store.v2.view === 'drafts'"
+             x-text="$store.v2.view === 'drafts' ? '选择一封草稿继续编辑' : '点击邮件打开；或按 J / K 移动、Enter 打开'"></div>
+
+      </div>
+    </template>
+
+    <!-- ==================== 话题 ==================== -->
+    <section class="v2-page" x-show="$store.v2.view === 'topics'" aria-label="话题">
+      <div style="max-width:960px">
+        <div class="kick">AI 按话题聚合往来邮件 · 同一规范化主题归为一个话题</div>
+        <h1>话题</h1>
+        <div class="v2-smart" data-testid="smart">
+          <div class="v2-smart-hd"><b>智能文件夹</b><span x-text="($store.mail.topicRules || []).length + ' 个 · 按条件自动收拢邮件，显示在「文件夹」里'"></span>
+            <span style="flex:1"></span>
+            <label class="v2-check"><input type="checkbox" x-model="$store.mail.showHiddenTopics">显示隐藏的</label>
+            <button class="btn btn-primary" @click="$store.v2.smartOpen = !$store.v2.smartOpen"><i class="ph ph-plus"></i>新建</button></div>
+          <div class="v2-smart-form card" x-show="$store.v2.smartOpen" data-testid="smart-form">
+            <div class="v2-row2"><input class="input" x-model="$store.mail.topicDef.name" placeholder="名称（如：抄送我的会议）" style="max-width:220px">
+              <input class="input" x-model="$store.mail.topicDef.nl" @keydown.enter="$store.mail.nlGenerate()" placeholder="用一句话描述，让 AI 生成条件（如：抄送给我的会议邮件）">
+              <button class="btn btn-primary" @click="$store.mail.nlGenerate()" :disabled="$store.mail.topicDefBusy"><i class="ph ph-sparkle"></i><span x-text="$store.mail.topicDefBusy ? '生成中…' : 'AI 生成条件'"></span></button></div>
+            <div class="v2-row2 checks">
+              <template x-for="k in [['cc_me','抄送我'],['to_me','发给我'],['has_attachment','有附件'],['unread','未读'],['starred','星标']]" :key="k[0]">
+                <label class="v2-check"><input type="checkbox" x-model="$store.mail.topicDef.filters[k[0]]"><span x-text="k[1]"></span></label></template>
+              <input class="input" x-model="$store.mail.topicDef.filters.from" placeholder="发件人包含" style="max-width:160px">
+              <select class="input" x-model="$store.mail.topicDef.filters.category" style="max-width:160px"><option value="">分类不限</option>
+                <template x-for="c in $store.mail.availableCats" :key="c"><option :value="c" x-text="c"></option></template></select></div>
+            <div class="v2-row2"><input class="input" x-model="$store.mail.topicDef.keywords" placeholder="主题关键词（精确匹配，逗号分隔）">
+              <input class="input" x-model="$store.mail.topicDef.query" placeholder="语义描述（模糊召回，可选）"></div>
+            <div class="v2-row2"><button class="btn btn-secondary" @click="$store.mail.previewTopicDef()">预览命中</button>
+              <span class="muted" x-show="$store.mail.topicPreviewCount !== null" x-text="'约 ' + $store.mail.topicPreviewCount + ' 封命中'"></span>
+              <span style="flex:1"></span><button class="btn btn-ghost" @click="$store.v2.smartOpen = false">取消</button>
+              <button class="btn btn-primary" @click="$store.v2.saveSmart()" data-testid="smart-save">保存</button></div>
+          </div>
+          <div class="v2-smart-list">
+            <template x-for="r in ($store.mail.sortedTopics || [])" :key="r.name">
+              <div class="v2-smart-it" :class="{ dim: r.hidden }">
+                <button class="nm" @click="$store.v2.enterTopicRule(r.name)"><i class="ph ph-funnel"></i><span x-text="r.name"></span>
+                  <span class="n" x-text="(($store.mail.topicCounts || {})[r.name] || {}).total ?? ''"></span></button>
+                <button class="v2-iconbtn" :class="{ on: r.pinned }" @click="$store.mail.pinTopic(r.name)" :title="r.pinned ? '取消置顶' : '置顶'"><i :class="(r.pinned ? 'ph-fill' : 'ph') + ' ph-push-pin'"></i></button>
+                <button class="v2-iconbtn" :class="{ on: r.mute }" @click="$store.mail.toggleMute(r.name)" :title="r.mute ? '取消免打扰' : '免打扰（从收件箱收起）'"><i :class="r.mute ? 'ph-fill ph-bell-slash' : 'ph ph-bell'"></i></button>
+                <button class="v2-iconbtn" @click="$store.mail.toggleHideTopic(r.name)" :title="r.hidden ? '显示' : '隐藏'"><i :class="r.hidden ? 'ph ph-eye-slash' : 'ph ph-eye'"></i></button>
+                <button class="v2-iconbtn" @click="$store.v2.delSmart(r.name)" title="删除"><i class="ph ph-trash"></i></button>
+              </div>
+            </template>
+            <div class="muted" x-show="!($store.mail.topicRules || []).length">还没有智能文件夹。点「新建」，或用一句话让 AI 生成条件。</div>
+          </div>
+        </div>
+        <div class="kick" style="margin:var(--space-8) 0 var(--space-4)">最近的会话</div>
+        <div class="v2-loading" x-show="$store.mail.topicsLoading">正在聚合…</div>
+        <div class="v2-topicgrid">
+          <template x-for="tp in ($store.mail.topics || []).slice(0, 60)" :key="tp.topic">
+            <button class="card v2-topiccard" @click="$store.v2.openTopic(tp)">
+              <div class="card-kicker"><span x-text="(tp.senders || []).slice(0, 2).join('、') || '话题'"></span><span x-text="$store.v2.fmtTime(tp.latest)"></span></div>
+              <div class="card-title" x-text="tp.topic"></div>
+              <div class="card-body" x-text="tp.snippet || ''"></div>
+              <div class="card-meta" x-text="tp.count + ' 封' + (tp.unread ? ' · ' + tp.unread + ' 封未读' : '') + ((tp.accounts || []).length ? ' · ' + tp.accounts.join('、') : '')"></div>
+            </button>
+          </template>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 设置 ==================== -->
+    <section class="v2-page" x-show="$store.v2.view === 'settings'" aria-label="设置" data-testid="settings">
+      <div style="max-width:860px">
+        <div class="kick">配置保存在 config.yaml；AI 相关设置保存后立即生效，无需重启</div>
+        <h1 style="margin-bottom:var(--space-6)">设置</h1>
+        <div class="v2-seg filter v2-tabs" role="tablist">
+          <template x-for="t in $store.v2.SET_TABS" :key="t[0]">
+            <button role="tab" :class="{ on: $store.v2.settingsTab === t[0] }" :aria-selected="$store.v2.settingsTab === t[0]" @click="$store.v2.settingsTab = t[0]; if (t[0] === 'airules') $store.v2.loadAiRules()" x-text="t[1]" :data-tab="t[0]"></button>
+          </template>
+        </div>
+
+        <!-- AI 模型 -->
+        <div class="v2-set" x-show="$store.v2.settingsTab === 'model'">
+          <div class="v2-field"><label>推理后端</label>
+            <select class="input" x-model="$store.settings.data.llm_provider"><option value="api">OpenAI 兼容 API（内网网关）</option><option value="ollama">Ollama（本机）</option></select></div>
+          <template x-if="$store.settings.data.llm_provider === 'ollama'">
+            <div class="v2-grid2">
+              <div class="v2-field"><label>Ollama 地址</label><input class="input" x-model="$store.settings.data.ollama_url" placeholder="http://127.0.0.1:11434"></div>
+              <div class="v2-field"><label>模型</label><input class="input" x-model="$store.settings.data.ollama_model" placeholder="qwen2.5:7b"></div>
+            </div>
+          </template>
+          <template x-if="$store.settings.data.llm_provider === 'api'">
+            <div class="v2-grid2">
+              <div class="v2-field"><label>API 地址</label><input class="input" x-model="$store.settings.data.api_base_url" placeholder="http://gateway/v1"></div>
+              <div class="v2-field"><label>模型</label><input class="input" x-model="$store.settings.data.api_model" placeholder="model-name"></div>
+              <div class="v2-field"><label>API Key <small x-show="$store.settings.data.api_key_set" x-text="$store.settings.data.api_key_source === 'env' ? '· 已由环境变量 QUILLBOX_API_KEY 提供' : '· 已设置（不回显）'"></small></label>
+                <input class="input" type="password" autocomplete="new-password" x-model="$store.settings.data.api_key"
+                       :placeholder="$store.settings.data.api_key_set ? '留空 = 保持不变；填写则替换' : '如需要则填写'"></div>
+              <div class="v2-field"><label>超时（秒）</label><input class="input" type="number" min="10" max="600" x-model.number="$store.settings.data.api_timeout"></div>
+            </div>
+          </template>
+          <div class="v2-row2"><button class="btn btn-secondary" @click="$store.settings.testAIConnection()" :disabled="$store.settings.testLoading"><i class="ph ph-plugs-connected"></i><span x-text="$store.settings.testLoading ? '测试中…' : '测试连接'"></span></button>
+            <span class="muted" x-show="$store.settings.testResult" :class="{ okc: $store.settings.testResult && $store.settings.testResult.success }" x-text="$store.settings.testResult && $store.settings.testResult.message"></span></div>
+        </div>
+
+        <!-- 提示词 -->
+        <div class="v2-set" x-show="$store.v2.settingsTab === 'prompts'">
+          <p class="muted">留空即使用内置提示词。占位符会在调用时替换。</p>
+          <template x-for="p in $store.v2.PROMPTS" :key="p[0]">
+            <div class="v2-field"><label><span x-text="p[1]"></span><small x-show="p[2]" x-text="' · 占位符 ' + p[2]"></small></label>
+              <textarea class="input mono" :rows="p[0] === 'prompt_insight' ? 8 : 4" x-model="$store.settings.data[p[0]]" :placeholder="'（使用内置' + p[1] + '提示词）'" :data-prompt="p[0]"></textarea>
+              <template x-if="p[0] === 'prompt_insight'"><small class="muted">必须让模型只输出 JSON，字段名与内置提示词一致，否则解析失败（失败不会落库，界面显示「分析失败」）。
+                <button class="v2-linkbtn" @click="$store.settings.data.prompt_insight = $store.settings.data.prompt_insight_default" data-testid="ins-load-default">载入内置提示词再改</button></small></template></div>
+          </template>
+        </div>
+
+        <!-- 邮件规则 -->
+        <div class="v2-set" x-show="$store.v2.settingsTab === 'rules'" data-testid="rules">
+          <p class="muted">条件命中后执行动作，按顺序匹配、首个命中生效。「移到文件夹」默认只改 Quillbox 内的归类。</p>
+          <div class="v2-aibar card">
+            <div class="k"><i class="ph ph-sparkle"></i>用一句话描述规则，让 AI 生成</div>
+            <div class="v2-row2"><input class="input" x-model="$store.settings.genText" @keydown.enter="$store.settings.generateRuleFromText()" placeholder="如：发件人含 noc@ 且与告警相关的邮件移到云告警并标已读">
+              <button class="btn btn-primary" @click="$store.settings.generateRuleFromText()" :disabled="$store.settings.genLoading" x-text="$store.settings.genLoading ? '生成中…' : '生成'"></button></div>
+            <div class="v2-row2" x-show="$store.settings.rulesUI.length">
+              <select class="input" x-model.number="$store.settings.evalTarget" style="max-width:260px"><template x-for="(r, i) in $store.settings.rulesUI" :key="i"><option :value="i" x-text="r.name || ('规则 ' + (i + 1))"></option></template></select>
+              <button class="btn btn-secondary" @click="$store.settings.evaluateSelected()" :disabled="$store.settings.evalLoading" x-text="$store.settings.evalLoading ? '评估中…' : 'AI 评估这条规则'"></button></div>
+            <div class="v2-evalres" x-show="$store.settings.evalResult" x-text="$store.settings.evalResult"></div>
+          </div>
+          <div class="v2-row2"><button class="btn btn-primary" @click="$store.v2.addRule()"><i class="ph ph-plus"></i>添加规则</button>
+            <button class="btn btn-secondary" @click="$store.settings.importOutlook()">从 Outlook 导入</button>
+            <span style="flex:1"></span>
+            <button class="btn btn-secondary" @click="$store.settings.runRules()" title="保存规则并立即应用到已有邮件"><i class="ph ph-play"></i>保存并应用到现有邮件</button></div>
+          <template x-for="(rule, i) in $store.settings.rulesUI" :key="i">
+            <div class="v2-rule card" :class="{ off: rule.enabled === false }">
+              <div class="hd">
+                <input type="checkbox" class="v2-cb" :checked="rule.enabled !== false" @change="rule.enabled = $event.target.checked" title="启用 / 停用">
+                <button class="nm" @click="$store.v2.openRule = $store.v2.openRule === i ? -1 : i">
+                  <i class="ph" :class="$store.v2.openRule === i ? 'ph-caret-down' : 'ph-caret-right'"></i><b x-text="rule.name || '未命名规则'"></b><span x-text="$store.v2.ruleSummary(rule)"></span></button>
+                <button class="v2-iconbtn" @click="$store.settings.moveRule(i, -1)" :disabled="i === 0" title="上移"><i class="ph ph-arrow-up"></i></button>
+                <button class="v2-iconbtn" @click="$store.settings.moveRule(i, 1)" :disabled="i === $store.settings.rulesUI.length - 1" title="下移"><i class="ph ph-arrow-down"></i></button>
+                <button class="v2-iconbtn" @click="if (confirm('删除这条规则？')) $store.settings.removeRule(i)" title="删除"><i class="ph ph-trash"></i></button>
+              </div>
+              <div class="bd" x-show="$store.v2.openRule === i">
+                <div class="v2-field"><label>名称</label><input class="input" x-model="rule.name" placeholder="如：机房告警"></div>
+                <div class="v2-box">
+                  <div class="v2-row2"><span class="muted">当满足</span>
+                    <select class="input" x-model="rule.matchMode" style="max-width:180px"><option value="all">全部条件（AND）</option><option value="any">任一条件（OR）</option></select>
+                    <span style="flex:1"></span><button class="btn btn-ghost" @click="$store.settings.addCondition(i)"><i class="ph ph-plus"></i>条件</button></div>
+                  <template x-for="(c, ci) in rule.conditions" :key="ci">
+                    <div class="v2-row2">
+                      <select class="input" x-model="c.field" style="max-width:130px"><template x-for="f in $store.v2.RULE_FIELDS" :key="f[0]"><option :value="f[0]" x-text="f[1]"></option></template></select>
+                      <select class="input" x-model="c.op" style="max-width:110px"><template x-for="o in $store.v2.RULE_OPS" :key="o[0]"><option :value="o[0]" x-text="o[1]"></option></template></select>
+                      <input class="input" x-model="c.value" placeholder="值（有附件填 是 / 否）">
+                      <button class="v2-iconbtn" @click="$store.settings.removeCondition(i, ci)" title="移除条件"><i class="ph ph-x"></i></button></div>
+                  </template>
+                  <div class="v2-field"><label><i class="ph ph-sparkle"></i> AI 语义条件（可选；每封邮件都会调用一次 AI）</label>
+                    <textarea class="input" rows="2" x-model="rule.aiMatch" placeholder="如：与服务器 / 机房 / UPS 告警相关的邮件"></textarea></div>
+                </div>
+                <div class="v2-box">
+                  <div class="muted">命中后执行</div>
+                  <div class="v2-row2">
+                    <select class="input" x-model="rule.actCategory" style="max-width:170px"><option value="">分类不改</option><template x-for="c in $store.v2.CATS" :key="c"><option :value="c" x-text="c"></option></template></select>
+                    <select class="input" x-model="rule.actFolder" style="max-width:190px"><option value="">不移动</option><template x-for="f in $store.mail.allFolderNames()" :key="f"><option :value="f" x-text="'移到 ' + f"></option></template></select>
+                    <label class="v2-check"><input type="checkbox" x-model="rule.actStar">加星标</label>
+                    <label class="v2-check"><input type="checkbox" x-model="rule.actMarkRead">标已读</label>
+                    <label class="v2-check"><input type="checkbox" x-model="rule.actSkipAi">跳过 AI</label></div>
+                  <textarea class="input mono" rows="2" x-model="rule.summary" placeholder="专用摘要提示词（留空用默认；{subject} {body} {history}）"></textarea>
+                  <textarea class="input mono" rows="2" x-model="rule.draft" placeholder="专用回复提示词（留空用默认；{subject} {body} {tone}）"></textarea>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div class="muted" x-show="!$store.settings.rulesUI.length">还没有规则。</div>
+        </div>
+
+        <!-- 邮箱标签 -->
+        <div class="v2-set" x-show="$store.v2.settingsTab === 'airules'" data-testid="airules">
+          <p class="muted" style="margin:0 0 var(--space-4)">你对 AI 判断做过的调整都在这里，可以随时撤销。规则只影响之后到达的邮件。</p>
+          <div class="muted" x-show="$store.v2.aiRules.loading">读取中…</div>
+          <div class="muted" x-show="!$store.v2.aiRules.loading && !$store.v2.aiRules.items.length">还没有调整过。</div>
+          <template x-for="it in $store.v2.aiRules.items" :key="it.type + it.id">
+            <div class="v2-airule" :data-type="it.type">
+              <div class="l"><span class="tag tag-neutral" x-text="$store.v2.AIR_TYPES[it.type]"></span><b x-text="it.scope"></b></div>
+              <div class="e" x-text="it.effect"></div>
+              <small class="m" x-text="'来源：' + it.source + ' · 创建：' + (it.created || '未记录') + (it.detail && it.type !== 'split' ? ' · ' + it.detail : '')"></small>
+              <div class="a">
+                <template x-if="it.type === 'stop'"><select class="input" @change="$store.v2.aiRuleEdit(it, $event.target.value)" aria-label="之后这类邮件">
+                  <option value="keep" :selected="!it.skip">仍显示摘要，但不提取待办</option><option value="skip" :selected="it.skip">直接归入「其他」，不分析</option></select></template>
+                <template x-if="it.type === 'correction'"><select class="input" @change="$store.v2.aiRuleEdit(it, $event.target.value)" aria-label="按什么处理">
+                  <template x-for="o in [['act','需要处理'],['reply','等你回复'],['notice','系统通知'],['fyi','仅供阅读']]" :key="o[0]"><option :value="o[0]" :selected="it.to === o[0]" x-text="o[1]"></option></template></select></template>
+                <button class="btn btn-ghost" @click="$store.v2.aiRuleUndo(it)" x-text="it.type === 'sender' ? '去邮件规则编辑' : '撤销'" data-testid="airule-undo"></button>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="v2-set" x-show="$store.v2.settingsTab === 'mailbox'" data-testid="mailbox">
+          <p class="muted">区分内网 / 外网 / 公共邮箱：按「精确账户」或「域名后缀」命中。账户切换按钮的简称、「外部」筛选都依据这里。</p>
+          <template x-for="(r, i) in $store.v2.mb.rules" :key="i">
+            <div class="v2-box">
+              <div class="v2-row2"><span class="v2-swatch" :style="'background:' + ($store.v2.MB_COLORS[r.color] || '#64748b')"></span>
+                <input class="input" x-model="r.name" placeholder="标签名" style="max-width:160px">
+                <select class="input" x-model="r.color" style="max-width:120px"><template x-for="(lab, key) in $store.v2.mb.palette" :key="key"><option :value="key" x-text="lab"></option></template></select>
+                <span style="flex:1"></span><button class="v2-iconbtn" @click="$store.v2.mb.rules.splice(i, 1)" title="删除"><i class="ph ph-trash"></i></button></div>
+              <div class="v2-grid2">
+                <div class="v2-field"><label>精确账户（逗号分隔）</label><input class="input" x-model="r.accountsText" placeholder="noc@example.com"></div>
+                <div class="v2-field"><label>域名后缀（逗号分隔，不写 @）</label><input class="input" x-model="r.domainsText" placeholder="example.com"></div></div>
+            </div>
+          </template>
+          <div class="v2-err" x-show="$store.v2.mb.errors.length"><template x-for="(e, i) in $store.v2.mb.errors" :key="i"><div x-text="e"></div></template></div>
+          <div class="v2-row2"><button class="btn btn-secondary" @click="$store.v2.mb.rules.push({ name: '', color: 'slate', accountsText: '', domainsText: '' })"><i class="ph ph-plus"></i>添加标签</button>
+            <span style="flex:1"></span><button class="btn btn-primary" @click="$store.v2.saveMb()" :disabled="$store.v2.mb.saving" x-text="$store.v2.mb.saving ? '保存中…' : '保存邮箱标签'"></button></div>
+        </div>
+
+        <!-- 同步与签名 -->
+        <div class="v2-set" x-show="$store.v2.settingsTab === 'general'">
+          <div class="v2-grid2">
+            <div class="v2-field"><label>同步间隔（分钟）</label><input class="input" type="number" min="1" max="120" x-model.number="$store.settings.data.sync_interval"></div>
+            <div class="v2-field"><label>增量同步回看天数</label><input class="input" type="number" min="1" max="90" x-model.number="$store.settings.data.sync_days"></div>
+          </div>
+          <div class="v2-field"><label>邮件签名（写信与 AI 草稿都会附上）</label><textarea class="input" rows="4" x-model="$store.settings.data.signature" placeholder="张三&#10;示例部"></textarea></div>
+          <div class="v2-row2"><span class="muted">外观</span>
+            <div class="v2-seg theme"><template x-for="m in [['system','跟随系统','ph-desktop'],['light','浅色','ph-sun'],['dark','深色','ph-moon']]" :key="m[0]">
+              <button :class="{ on: $store.v2.themeMode === m[0] }" :title="m[1]" @click="$store.v2.setTheme(m[0])"><i class="ph" :class="m[2]"></i></button></template></div>
+            <button class="btn btn-ghost" @click="$store.v2.toggleDensity()" x-text="'列表密度：' + ($store.v2.compact ? '紧凑' : '舒适')"></button></div>
+          <div class="v2-row2" style="margin-top:var(--space-4)" data-testid="rail-set"><span class="muted">侧边栏</span>
+            <div class="v2-seg"><template x-for="m in [['auto','自动（宽屏展开）'],['full','始终展开'],['mini','始终收起']]" :key="m[0]">
+              <button :class="{ on: $store.v2.railPref === m[0] }" @click="$store.v2.setRail(m[0])" :data-rail="m[0]" x-text="m[1]"></button></template></div>
+            <small class="muted">也可以点侧栏最上面的箭头，或按 [ 切换</small></div>
+          <div class="v2-row2" style="margin-top:var(--space-4)" data-testid="ntf-set"><span class="muted">系统通知</span>
+            <div class="v2-seg"><template x-for="m in [['off','关闭'],['important','需要处理 / 等你回复'],['all','所有新邮件']]" :key="m[0]">
+              <button :class="{ on: $store.v2.ntf.mode === m[0] }" @click="$store.v2.setNotify(m[0])" :data-ntf="m[0]" x-text="m[1]"></button></template></div>
+            <button class="btn btn-ghost" @click="$store.v2.ntfTest()" x-show="!$store.v2.ntfEmbedded">发送测试通知</button></div>
+          <small class="muted" x-text="$store.v2.ntfEmbedded ? '嵌入门户时，新邮件由门户负责提醒（Quillbox 经桥接推送 notify 事件）。' : ('权限：' + $store.v2.ntfPermText + '。无需处理、静音告警、稍后提醒中的邮件不会提醒；同时到达多封时合并成一条。')"></small>
+          <div class="v2-field" style="margin-top:var(--space-4)"><label>完成说明的快捷原因（每行一个，最多 9 个；留空保存 = 恢复默认）</label>
+            <textarea class="input" rows="4" :value="$store.v2.quickReasonsText" @change="$store.v2.setQuickReasons($event.target.value)" data-testid="qr-set"></textarea></div>
+          <div class="v2-row2" style="margin-top:var(--space-4)"><span class="muted">完成并归档时填写说明</span>
+            <div class="v2-seg" data-testid="note-mode"><template x-for="m in [['smart','需要处理/等你回复时'],['always','每次都问'],['never','从不问']]" :key="m[0]">
+              <button :class="{ on: $store.v2.noteMode === m[0] }" @click="$store.v2.setNoteMode(m[0])" x-text="m[1]"></button></template></div></div>
+          <label class="v2-check" style="margin-top:var(--space-4)" data-testid="read-on-open">
+            <input type="checkbox" :checked="$store.v2.readOnOpen" @change="$store.v2.setReadOnOpen($event.target.checked)">
+            <span>打开即标为已读（默认开启：点击即转状态；关闭时：打开后停留 300 毫秒才标已读；本机生效，立即保存）</span></label>
+        </div>
+
+        <div class="v2-savebar" x-show="['model', 'prompts', 'rules', 'general'].includes($store.v2.settingsTab)">
+          <span class="muted" x-text="$store.settings.loading ? '读取中…' : ''"></span><span style="flex:1"></span>
+          <button class="btn btn-primary" @click="$store.v2.saveSettings()" :disabled="$store.settings.saving" data-testid="settings-save"><i class="ph ph-floppy-disk"></i><span x-text="$store.settings.saving ? '保存中…' : '保存设置'"></span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ==================== 统计看板 ==================== -->
+    <section class="v2-page" x-show="$store.v2.view === 'dashboard'" aria-label="统计看板" data-testid="dashboard">
+      <div style="max-width:960px">
+        <div class="kick">全部账户 · 不含回收站</div>
+        <h1>统计看板</h1>
+        <div class="v2-loading" x-show="$store.mail.dashLoading && !$store.mail.dashboard">统计中…</div>
+        <template x-if="$store.mail.dashboard">
+          <div>
+            <div class="v2-kpis">
+              <template x-for="k in [['total','邮件'],['unread','未读'],['with_attachment','有附件'],['starred','星标']]" :key="k[0]">
+                <div class="card v2-kpi"><div class="v" x-text="($store.mail.dashboard[k[0]] || 0).toLocaleString()"></div><div class="l" x-text="k[1]"></div></div></template>
+              <div class="card v2-kpi"><div class="v" x-text="(($store.mail.dashboard.todos || {}).pending || 0)"></div><div class="l" x-text="'待办 · 已完成 ' + (($store.mail.dashboard.todos || {}).done || 0)"></div></div>
+            </div>
+            <div class="card v2-chart">
+              <div class="k">近 14 天邮件量</div>
+              <div class="v2-bars">
+                <template x-for="d in ($store.mail.dashboard.by_day || [])" :key="d.label">
+                  <div class="col" :title="d.label + '：' + d.count + ' 封'"><span class="n" x-text="d.count"></span>
+                    <span class="b" :style="'height:' + Math.max(2, Math.round(d.count / $store.mail._maxCount($store.mail.dashboard.by_day) * 100)) + '%'"></span><span class="d" x-text="d.label.slice(3)"></span></div></template>
+              </div>
+            </div>
+            <div class="v2-grid3">
+              <template x-for="sec in [['by_category','按分类'],['by_account','按账户'],['top_senders','发件最多']]" :key="sec[0]">
+                <div class="card v2-hbars"><div class="k" x-text="sec[1]"></div>
+                  <template x-for="(r, ri) in ($store.mail.dashboard[sec[0]] || []).slice(0, 10)" :key="ri">
+                    <div class="r"><span class="l" x-text="r.label" :title="r.label"></span><span class="n" x-text="r.count.toLocaleString()"></span>
+                      <span class="t"><span :style="'width:' + Math.round(r.count / $store.mail._maxCount($store.mail.dashboard[sec[0]]) * 100) + '%'"></span></span></div></template>
+                </div></template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <!-- ==================== 待办 ==================== -->
+    <section class="v2-page" x-show="$store.v2.view === 'todos'" aria-label="待办">
+      <div style="max-width:680px">
+        <div class="kick">从邮件中提取 · 按 T 添加当前邮件</div>
+        <h1 style="margin-bottom:var(--space-6)">待办</h1>
+        <input class="input" x-model="$store.v2.todoDraft" placeholder="添加待办，回车确认…" style="font-size:14px;min-height:40px;border-radius:var(--radius-md)"
+               @keydown.enter="if ($store.v2.todoDraft.trim()) { $store.mail.addTodo($store.v2.todoDraft); $store.v2.todoDraft = ''; }">
+        <template x-for="g in [['接下来', t => t.status !== 'done' && t.priority === 'high'], ['待处理', t => t.status !== 'done' && t.priority !== 'high'], ['已完成', t => t.status === 'done']]" :key="g[0]">
+          <div x-show="($store.mail.todos || []).filter(g[1]).length">
+            <div class="v2-todo-group"><b x-text="g[0]"></b><span x-text="($store.mail.todos || []).filter(g[1]).length"></span></div>
+            <template x-for="t in ($store.mail.todos || []).filter(g[1]).slice(0, 200)" :key="t.id">
+              <div class="v2-todo" :class="{ done: t.status === 'done' }">
+                <button class="ck" @click="$store.mail.toggleTodo(t.id)" :aria-label="t.status === 'done' ? '标为未完成' : '标为完成'"><i class="ph ph-check" x-show="t.status === 'done'"></i></button>
+                <div class="tx">
+                  <div class="a" x-text="t.content"></div>
+                  <div class="b"><input type="date" class="v2-tdue" :value="t.due_date || ''" @change="$store.v2.todoSet(t, { due_date: $event.target.value || null })" :aria-label="'截止日：' + (t.due_date || '未设')" data-testid="todo-due">
+                    <button class="v2-tpri" :class="{ on: t.priority === 'high' }" @click="$store.v2.todoSet(t, { priority: t.priority === 'high' ? 'normal' : 'high' })" data-testid="todo-pri" x-text="t.priority === 'high' ? '高优先级' : '普通'"></button>
+                    <button x-show="t.source_email_id" @click="$store.v2.view = 'inbox'; $store.v2.scope = null; $store.mail.openTodoSource(t.source_email_id)">来自邮件 →</button></div>
+                </div>
+                <button class="del" @click="$store.v2.todoDelete(t)" title="删除（可撤销）" aria-label="删除待办" data-testid="todo-del"><i class="ph ph-x"></i></button>
+              </div>
+            </template>
+          </div>
+        </template>
+        <div class="v2-empty" x-show="!($store.mail.todos || []).length"><div class="t">没有待办</div><div class="d">打开一封邮件按 T，或在上方直接输入。</div></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ==================== 文件夹浮层 ==================== -->
+  <div class="v2-popover" x-show="$store.v2.panel === 'folders'" x-transition.opacity @click.outside="$store.v2.panel = ''" data-testid="folders">
+    <div class="hd">全部文件夹</div>
+    <template x-for="f in $store.v2.folders" :key="'g' + f.name">
+      <button class="it" :class="{ on: $store.v2.view === 'folder' && $store.mail.currentFolder === f.name && !$store.mail.currentAccount }" @click="$store.v2.openFolder(f.name, '')">
+        <i class="ph ph-folder"></i><span class="l" x-text="f.name"></span><span class="n" :class="{ u: f.unread }" x-text="f.unread ? f.unread : f.total"></span></button>
+    </template>
+    <template x-if="($store.mail.topicRules || []).length">
+      <div><div class="hd">智能文件夹</div>
+        <template x-for="r in ($store.mail.topicRules || []).filter(r => !r.hidden)" :key="'t' + r.name">
+          <button class="it" @click="$store.v2.enterTopicRule(r.name)"><i class="ph ph-funnel"></i><span class="l" x-text="r.name"></span>
+            <span class="n" x-text="($store.mail.topicCounts && $store.mail.topicCounts[r.name] && $store.mail.topicCounts[r.name].total) || ''"></span></button>
+        </template></div>
+    </template>
+    <template x-if="($store.mail.savedSearches || []).length">
+      <div><div class="hd">已存搜索</div>
+        <template x-for="s in $store.mail.savedSearches" :key="'s' + s.name">
+          <button class="it" @click="$store.v2.panel = ''; $store.v2.applySavedSearch(s)"><i class="ph ph-magnifying-glass"></i><span class="l" x-text="s.name"></span></button>
+        </template></div>
+    </template>
+    <div class="hd">按账户</div>
+    <template x-for="a in $store.v2.accounts" :key="'a' + a.name">
+      <div>
+        <div class="it" style="cursor:default"><i class="ph ph-user-circle"></i><span class="l" x-text="a.label"></span></div>
+        <template x-for="f in a.folders" :key="a.name + f">
+          <button class="it sub" :class="{ on: $store.v2.view === 'folder' && $store.mail.currentFolder === f && $store.mail.currentAccount === a.name }" @click="$store.v2.openFolder(f, a.name)">
+            <span class="l" x-text="f"></span><span class="n u" x-show="a.unreadMap[f]" x-text="a.unreadMap[f]"></span></button>
+        </template>
+      </div>
+    </template>
+  </div>
+
+  <!-- ==================== 更多浮层 ==================== -->
+  <div class="v2-popover" x-show="$store.v2.panel === 'more'" x-transition.opacity @click.outside="$store.v2.panel = ''" data-testid="more">
+    <div class="hd">更多</div>
+    <button class="it" @click="$store.v2.panel = 'chat'"><i class="ph ph-chat-circle-dots"></i><span class="l">AI 对话</span></button>
+    <button class="it" @click="$store.v2.openContacts()"><i class="ph ph-address-book"></i><span class="l">通讯录</span></button>
+    <button class="it" @click="$store.v2.panel = ''; $store.mail.sync()"><i class="ph ph-arrows-clockwise"></i><span class="l">立即同步</span>
+      <span class="n" x-text="$store.mail.stats && $store.mail.stats.last_sync ? $store.v2.fmtTime($store.mail.stats.last_sync) : ''"></span></button>
+    <button class="it" @click="$store.v2.toggleDensity()"><i class="ph ph-rows"></i><span class="l" x-text="'列表密度：' + ($store.v2.compact ? '紧凑' : '舒适')"></span></button>
+    <button class="it" @click="$store.v2.panel = 'help'"><i class="ph ph-keyboard"></i><span class="l">键盘快捷键</span><span class="n">?</span></button>
+    <button class="it" @click="$store.v2.go('settings')"><i class="ph ph-gear-six"></i><span class="l">设置 · 模型 · 规则</span></button>
+    <button class="it" @click="$store.v2.go('dashboard')"><i class="ph ph-chart-bar"></i><span class="l">统计看板</span></button>
+    <button class="it" @click="$store.v2.go('topics'); $store.v2.smartOpen = true"><i class="ph ph-funnel"></i><span class="l">管理智能文件夹</span></button>
+    <div class="hd">其他</div>
+    <button class="it" @click="$store.v2.openClassic()"><i class="ph ph-browser"></i><span class="l">经典界面</span><i class="ph ph-arrow-square-out"></i></button>
+  </div>
+
+  <!-- ==================== 写邮件 ==================== -->
+  <template x-if="$store.v2.compose">
+    <button class="v2-cmin" x-show="$store.v2.compose.min" @click="$store.v2.restoreCompose()" data-testid="compose-min" title="展开写信区 (C)">
+      <i class="ph ph-pencil-simple-line"></i><span class="t" x-text="$store.v2.composeTitle"></span><small x-text="$store.v2.composeSaved"></small><i class="ph ph-caret-up"></i></button>
+  </template>
+  <template x-if="$store.v2.compose">
+    <div class="v2-compose" role="dialog" aria-label="写邮件" data-testid="compose" x-show="!$store.v2.compose.min && !$store.v2.compose.inline">
+      <div class="v2-chead">
+        <div class="dots"><button @click="$store.v2.minimizeCompose()" title="收起 (Esc)，不丢稿" aria-label="收起"></button><span></span><span></span></div>
+        <span class="t" x-text="$store.v2.composeTitle"></span><small class="saved" x-text="$store.v2.composeSaved" data-testid="compose-saved"></small>
+      </div>
+      <div class="v2-cfields">
+        <div class="v2-cfield from" x-show="$store.v2.senderList.length > 1">
+          <label>发件</label>
+          <template x-for="s in $store.v2.senderList" :key="s.account">
+            <button class="v2-pill" :class="{ on: $store.v2.compose.from === s.account }" :disabled="!s.ready" :title="s.ready ? '' : '该账户未配置发信'" @click="$store.v2.compose.from = s.account" x-text="s.account"></button>
+          </template>
+        </div>
+        <div class="v2-cfield"><label>收件人</label>
+          <input data-cfield="to" x-model="$store.v2.compose.to" placeholder="姓名或邮箱，多个用 ; 分隔" @input="$store.v2.acInput('to')" @keydown="$store.v2.acKey($event)" @blur="setTimeout(() => $store.v2.cAc.list = [], 150)">
+          <button class="cctoggle" x-show="!$store.v2.compose.showCc" @click="$store.v2.compose.showCc = true">抄送</button>
+          <button class="cctoggle" x-show="!$store.v2.compose.showBcc" @click="$store.v2.compose.showBcc = true">密送</button>
+          <div class="v2-ac" x-show="$store.v2.cAc.field === 'to' && $store.v2.cAc.list.length">
+            <template x-for="(p, i) in $store.v2.cAc.list" :key="p.email"><button :class="{ on: i === $store.v2.cAc.idx }" @mousedown.prevent="$store.v2.acPick(p)"><span x-text="p.name || p.email"></span><small x-text="p.email"></small></button></template>
+          </div>
+        </div>
+        <div class="v2-cfield" x-show="$store.v2.compose.showCc"><label>抄送</label>
+          <input data-cfield="cc" x-model="$store.v2.compose.cc" placeholder="抄送" @input="$store.v2.acInput('cc')" @keydown="$store.v2.acKey($event)" @blur="setTimeout(() => $store.v2.cAc.list = [], 150)">
+          <div class="v2-ac" x-show="$store.v2.cAc.field === 'cc' && $store.v2.cAc.list.length">
+            <template x-for="(p, i) in $store.v2.cAc.list" :key="p.email"><button :class="{ on: i === $store.v2.cAc.idx }" @mousedown.prevent="$store.v2.acPick(p)"><span x-text="p.name || p.email"></span><small x-text="p.email"></small></button></template>
+          </div>
+        </div>
+        <div class="v2-cfield" x-show="$store.v2.compose.showBcc"><label>密送</label>
+          <input data-cfield="bcc" x-model="$store.v2.compose.bcc" placeholder="多个用 ; 分隔（不会出现在邮件头）" @input="$store.v2.acInput('bcc')" @keydown="$store.v2.acKey($event)" @blur="setTimeout(() => $store.v2.cAc.list = [], 150)">
+          <div class="v2-ac" x-show="$store.v2.cAc.field === 'bcc' && $store.v2.cAc.list.length">
+            <template x-for="(p, i) in $store.v2.cAc.list" :key="p.email"><button :class="{ on: i === $store.v2.cAc.idx }" @mousedown.prevent="$store.v2.acPick(p)"><span x-text="p.name || p.email"></span><small x-text="p.email"></small></button></template>
+          </div>
+        </div>
+        <div class="v2-cfield"><label>主题</label><input class="subj" data-cfield="subject" x-model="$store.v2.compose.subject" placeholder="主题"></div>
+      </div>
+      <!-- 富文本：复用经典 compose 组件的编辑能力（内联样式输出、表格、光标保存），只换新界面的样式 -->
+      <div class="v2-rte" x-data="compose" x-init="$nextTick(() => { setEditorHtml($store.v2.compose.body || ''); })">
+        <div class="v2-rtb" role="toolbar" aria-label="格式">
+          <select class="v2-tsel" @mousedown="saveCaret()" @change="setBlock($event.target.value)" :value="curBlock" title="段落样式" style="width:76px">
+            <option value="p">正文</option><option value="h1">标题 1</option><option value="h2">标题 2</option><option value="h3">标题 3</option><option value="blockquote">引用</option><option value="pre">代码块</option></select>
+          <select class="v2-tsel" @mousedown="saveCaret()" @change="setFont($event.target.value)" title="字体" style="width:92px">
+            <option value="">字体</option><option value="'Microsoft YaHei', 微软雅黑, sans-serif">微软雅黑</option><option value="SimSun, 宋体, serif">宋体</option>
+            <option value="SimHei, 黑体, sans-serif">黑体</option><option value="KaiTi, 楷体, serif">楷体</option><option value="DengXian, 等线, sans-serif">等线</option>
+            <option value="Arial, Helvetica, sans-serif">Arial</option><option value="Calibri, sans-serif">Calibri</option><option value="'Times New Roman', Times, serif">Times New Roman</option>
+            <option value="Georgia, serif">Georgia</option><option value="'Courier New', Courier, monospace">Courier New</option><option value="Consolas, Monaco, monospace">Consolas</option></select>
+          <select class="v2-tsel" @mousedown="saveCaret()" @change="setSize($event.target.value)" title="字号" style="width:58px">
+            <option value="">字号</option><template x-for="n in [12,13,14,16,18,20,24,28,32,40,48]" :key="n"><option :value="n" x-text="n"></option></template></select>
+          <select class="v2-tsel" @mousedown="saveCaret()" @change="setLineHeight($event.target.value)" title="行距" style="width:58px">
+            <option value="">行距</option><option value="1">1.0</option><option value="1.15">1.15</option><option value="1.5">1.5</option><option value="1.75">1.75</option><option value="2">2.0</option></select>
+          <span class="v2-tsep"></span>
+          <template x-for="b in [['bold','text-b','加粗 (Ctrl+B)'],['italic','text-italic','斜体 (Ctrl+I)'],['underline','text-underline','下划线 (Ctrl+U)'],['strikeThrough','text-strikethrough','删除线'],['superscript','text-superscript','上标'],['subscript','text-subscript','下标']]" :key="b[0]">
+            <button type="button" class="v2-tb" :class="{ on: fmt[b[0]] }" :title="b[2]" :aria-label="b[2]" :data-cmd="b[0]" @mousedown.prevent="exec(b[0]); refreshFmt()"><i class="ph" :class="'ph-' + b[1]"></i></button>
+          </template>
+          <span class="v2-tsep"></span>
+          <div class="v2-tpop-wrap" @click.outside="colorPickerOpen = false">
+            <button type="button" class="v2-tb" title="字体颜色" aria-label="字体颜色" @mousedown="saveCaret()" @click="colorPickerOpen = !colorPickerOpen; hilitePickerOpen = false; tablePickerOpen = false"><i class="ph ph-text-aa"></i></button>
+            <div class="v2-tpop" x-show="colorPickerOpen" style="display:none">
+              <div class="v2-swatches"><template x-for="c in ['#000000','#374151','#6B7280','#B91C1C','#DC2626','#EA580C','#CA8A04','#16A34A','#0D9488','#2563EB','#4F46E5','#7C3AED','#DB2777','#FFFFFF']" :key="c">
+                <button type="button" class="v2-sw" :style="'background:' + c" :title="c" @mousedown.prevent="setColor(c)"></button></template></div>
+              <label class="v2-tcustom">自定义<input type="color" @mousedown="saveCaret()" @change="setColor($event.target.value)"></label>
+            </div>
+          </div>
+          <div class="v2-tpop-wrap" @click.outside="hilitePickerOpen = false">
+            <button type="button" class="v2-tb" title="背景高亮" aria-label="背景高亮" @mousedown="saveCaret()" @click="hilitePickerOpen = !hilitePickerOpen; colorPickerOpen = false; tablePickerOpen = false"><i class="ph ph-highlighter-circle"></i></button>
+            <div class="v2-tpop" x-show="hilitePickerOpen" style="display:none">
+              <div class="v2-swatches"><template x-for="c in ['#FEF08A','#FDE68A','#BBF7D0','#A7F3D0','#BFDBFE','#DDD6FE','#FBCFE8','#FECACA','#E5E7EB']" :key="c">
+                <button type="button" class="v2-sw" :style="'background:' + c" :title="c" @mousedown.prevent="setHilite(c)"></button></template>
+                <button type="button" class="v2-sw none" title="取消高亮" @mousedown.prevent="setHilite('transparent')">✕</button></div>
+              <label class="v2-tcustom">自定义<input type="color" @mousedown="saveCaret()" @change="setHilite($event.target.value)"></label>
+            </div>
+          </div>
+          <span class="v2-tsep"></span>
+          <template x-for="b in [['insertUnorderedList','list-bullets','无序列表'],['insertOrderedList','list-numbers','有序列表'],['outdent','text-outdent','减少缩进'],['indent','text-indent','增加缩进'],['justifyLeft','text-align-left','左对齐'],['justifyCenter','text-align-center','居中'],['justifyRight','text-align-right','右对齐'],['justifyFull','text-align-justify','两端对齐']]" :key="b[0]">
+            <button type="button" class="v2-tb" :class="{ on: fmt[b[0]] }" :title="b[2]" :aria-label="b[2]" :data-cmd="b[0]" @mousedown.prevent="exec(b[0]); refreshFmt()"><i class="ph" :class="'ph-' + b[1]"></i></button>
+          </template>
+          <span class="v2-tsep"></span>
+          <button type="button" class="v2-tb" title="插入链接" aria-label="插入链接" @mousedown.prevent="createLink()"><i class="ph ph-link"></i></button>
+          <button type="button" class="v2-tb" title="取消链接" aria-label="取消链接" @mousedown.prevent="exec('unlink')"><i class="ph ph-link-break"></i></button>
+          <button type="button" class="v2-tb" title="引用块" aria-label="引用块" @mousedown.prevent="insertQuote()"><i class="ph ph-quotes"></i></button>
+          <button type="button" class="v2-tb" title="分割线" aria-label="分割线" @mousedown.prevent="exec('insertHorizontalRule'); refreshFmt()"><i class="ph ph-minus"></i></button>
+          <div class="v2-tpop-wrap" @click.outside="tablePickerOpen = false">
+            <button type="button" class="v2-tb wide" title="插入 / 编辑表格" aria-label="表格" data-cmd="table" @mousedown="saveCaret()" @click="tablePickerOpen = !tablePickerOpen; colorPickerOpen = false; hilitePickerOpen = false"><i class="ph ph-table"></i>表格</button>
+            <div class="v2-tpop" x-show="tablePickerOpen" style="display:none;width:220px">
+              <div class="v2-row2"><input class="input" type="number" min="1" max="30" x-model.number="tableRows" style="width:56px;min-width:0;flex:none"><span class="muted">行 ×</span>
+                <input class="input" type="number" min="1" max="12" x-model.number="tableCols" style="width:56px;min-width:0;flex:none"><span class="muted">列</span></div>
+              <label class="v2-check" style="margin-top:8px"><input type="checkbox" x-model="tablePickerHeader">首行为表头</label>
+              <button type="button" class="btn btn-primary" style="width:100%;margin-top:8px" data-testid="table-insert" @click="insertTable(tableRows, tableCols, tablePickerHeader); tablePickerOpen = false; $store.v2.compose.body = body">插入表格</button>
+              <div class="muted" style="margin:10px 0 6px">改已有表格（先把光标放进单元格）</div>
+              <div class="v2-tgrid">
+                <button type="button" @mousedown.prevent="tableAddRow(true)">下方插入行</button><button type="button" @mousedown.prevent="tableAddRow(false)">上方插入行</button>
+                <button type="button" @mousedown.prevent="tableAddCol(true)">右侧插入列</button><button type="button" @mousedown.prevent="tableAddCol(false)">左侧插入列</button>
+                <button type="button" class="danger" @mousedown.prevent="tableDelRow()">删除本行</button><button type="button" class="danger" @mousedown.prevent="tableDelCol()">删除本列</button>
+              </div>
+            </div>
+          </div>
+          <span class="v2-tsep"></span>
+          <button type="button" class="v2-tb" title="清除格式" aria-label="清除格式" @mousedown.prevent="exec('removeFormat'); refreshFmt()"><i class="ph ph-eraser"></i></button>
+          <button type="button" class="v2-tb" title="撤销 (Ctrl+Z)" aria-label="撤销" @mousedown.prevent="exec('undo'); refreshFmt()"><i class="ph ph-arrow-counter-clockwise"></i></button>
+          <button type="button" class="v2-tb" title="重做 (Ctrl+Y)" aria-label="重做" @mousedown.prevent="exec('redo'); refreshFmt()"><i class="ph ph-arrow-clockwise"></i></button>
+        </div>
+        <div class="v2-editor" :class="{ busy: $store.v2.aiBusyText }" x-ref="editor" contenteditable="true" data-cfield="body" role="textbox" aria-multiline="true"
+             :data-placeholder="$store.v2.compose.mode === 'forward' ? '附言（原邮件会附在后面）' : '正文… 或点下方「AI 草拟」'"
+             @input="syncBody(); $store.v2.compose.body = body; refreshFmt()" @keyup="refreshFmt()" @mouseup="saveCaret(); refreshFmt()"
+             @focus="refreshFmt()" @blur="saveCaret(); $store.v2.compose.body = $el.innerHTML"></div>
+      </div>
+      <div class="v2-cattach" x-show="$store.v2.compose.attachments.length">
+        <template x-for="a in $store.v2.compose.attachments" :key="a.name + a.size">
+          <span><i class="ph" :class="a.uploading ? 'ph-spinner v2-spin' : 'ph-paperclip'"></i><span x-text="a.name"></span>
+            <button @click="$store.v2.compose.attachments = $store.v2.compose.attachments.filter(x => x !== a)" aria-label="移除附件"><i class="ph ph-x"></i></button></span>
+        </template>
+      </div>
+      <div class="v2-cfoot">
+        <span class="v2-aitools" :title="$store.v2.compose.srcId ? '基于来信生成，会替换当前正文' : 'AI 草拟基于来信：回复或转发时可用'">
+          <i class="ph ph-sparkle"></i>
+          <template x-for="k in ['草拟', '更正式', '更简短', '译为英文']" :key="k">
+            <button :disabled="!$store.v2.compose.srcId" @click="$store.v2.composeAi(k)" x-text="k === '草拟' ? 'AI 草拟' : k"></button>
+          </template>
+        </span>
+        <span class="busy" x-text="$store.v2.aiBusyText"></span>
+        <span class="grow"></span>
+        <label class="btn btn-ghost btn-icon" x-show="!$store.v2.sendBlocked" title="附件" aria-label="添加附件"><i class="ph ph-paperclip"></i><input type="file" multiple hidden @change="$store.v2.attach($event)"></label>
+        <button class="btn btn-ghost" @click="$store.v2.saveDraft()">存草稿</button>
+        <button class="btn btn-ghost" @click="$store.v2.discard()" title="丢弃后可在「最近操作」撤销">丢弃</button>
+        <template x-if="!$store.v2.sendBlocked">
+          <button class="btn btn-primary" @click="$store.v2.send()" data-testid="send"><i class="ph ph-paper-plane-tilt"></i>发送 <span style="font-size:11px;opacity:0.7">⌘↵</span></button></template>
+        <template x-if="$store.v2.sendBlocked">
+          <span class="v2-sendoff" data-testid="send-blocked">
+            <button class="btn btn-primary" disabled aria-disabled="true" title="嵌入门户时的发送已按配置关闭（embed.allow_send）"><i class="ph ph-prohibit"></i>发送未开放</button>
+            <button class="v2-linkbtn" @click="$store.v2.openFullApp()">在 Quillbox 中发送 ›</button></span></template>
+      </div>
+    </div>
+  </template>
+
+  <!-- ==================== 命令面板 ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.cmd.open" @click.self="$store.v2.closeCmd()" data-testid="cmd" style="display:none">
+    <div class="v2-cmd" role="dialog" aria-label="命令面板">
+      <div class="v2-cmdin"><i class="ph ph-sparkle"></i>
+        <input id="v2-cmd-input" x-effect="$store.v2.cmd.open && $nextTick(() => $el.focus())" x-model="$store.v2.cmd.q" @input="$store.v2.onCmdQ()" placeholder="搜索邮件、执行命令，或用一句话问 AI" autocomplete="off"></div>
+      <div class="v2-hrule"></div>
+      <div class="v2-cmdlist">
+        <template x-for="s in $store.v2.cmdSections" :key="s.title">
+          <div>
+            <div class="v2-cmdsec" x-text="s.title"></div>
+            <template x-for="c in s.items" :key="c._i">
+              <button class="v2-cmditem" :class="{ on: c._i === $store.v2.cmd.idx }" @click="c.run()" @mouseenter="$store.v2.cmd.idx = c._i">
+                <i :class="c.icon"></i><span class="l" x-text="c.label"></span><span class="s" x-text="c.sub || ''"></span><span class="h" x-text="c.hint || ''"></span>
+              </button>
+            </template>
+          </div>
+        </template>
+      </div>
+      <div class="v2-cmdfoot"><span>↑↓ 选择</span><span>↵ 执行</span><span>esc 关闭</span></div>
+    </div>
+  </div>
+
+  <!-- ==================== 对话框：AI 对话 / 通讯录 / 快捷键 ==================== -->
+  <div class="v2-overlay" x-show="['chat', 'contacts', 'help'].includes($store.v2.panel)" @click.self="$store.v2.panel = ''" style="display:none">
+    <div class="v2-dialog" role="dialog" x-show="$store.v2.panel === 'chat'" aria-label="AI 对话">
+      <div class="hd"><span class="v2-aiicon"><i class="ph ph-sparkle"></i></span><span class="grow">AI 对话</span>
+        <button class="btn btn-ghost" @click="$store.ai.clearChat()">清空</button>
+        <button class="v2-iconbtn" @click="$store.v2.panel = ''" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd" x-effect="$store.ai.chatScrollTick; $nextTick(() => $el.scrollTop = $el.scrollHeight)">
+        <div class="v2-chat">
+          <div class="none" style="font-size:13px;color:var(--color-neutral-500)" x-show="!$store.ai.chatMessages.length">问关于邮件的任何问题，例如「这周有哪些需要我回复的？」</div>
+          <template x-for="(msg, i) in $store.ai.chatMessages" :key="i"><div class="v2-msg" :class="msg.role" x-text="msg.content || (msg.streaming ? '…' : '')"></div></template>
+        </div>
+      </div>
+      <div class="v2-chatin">
+        <input class="input" x-model="$store.ai.chatInput" placeholder="输入问题，回车发送" @keydown.enter="$store.ai.chatMode = 'global'; $store.ai.sendMessage()">
+        <button class="btn btn-primary" @click="$store.ai.chatMode = 'global'; $store.ai.sendMessage()" :disabled="$store.ai.chatLoading">发送</button>
+      </div>
+    </div>
+    <div class="v2-dialog" role="dialog" x-show="$store.v2.panel === 'contacts'" aria-label="通讯录">
+      <div class="hd"><i class="ph ph-address-book"></i><span class="grow">通讯录</span><button class="v2-iconbtn" @click="$store.v2.panel = ''" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div style="padding:0 var(--space-6) var(--space-4)"><input class="input" x-model="$store.v2.contactQ" placeholder="搜索姓名或邮箱"></div>
+      <div class="bd">
+        <template x-for="p in $store.v2.contactList" :key="p.email">
+          <div class="v2-contact"><span class="v2-avatar" style="width:30px;height:30px;font-size:12px" x-text="(p.name || p.email || '?').charAt(0).toUpperCase()"></span>
+            <div class="who"><span x-text="p.name || p.email"></span><small x-text="p.email"></small></div>
+            <button class="btn btn-ghost" @click="$store.v2.composeTo(p)"><i class="ph ph-pencil-simple-line"></i>写邮件</button></div>
+        </template>
+        <div class="none" style="font-size:13px;color:var(--color-neutral-500)" x-show="!$store.v2.contactList.length">没有匹配的联系人</div>
+      </div>
+    </div>
+    <div class="v2-dialog" role="dialog" x-show="$store.v2.panel === 'help'" aria-label="键盘快捷键">
+      <div class="hd"><i class="ph ph-keyboard"></i><span class="grow">键盘快捷键</span><button class="v2-iconbtn" @click="$store.v2.panel = ''" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd"><table class="v2-kbd"><tbody>
+        <template x-for="r in [['J / ↓','高亮下一封（不打开、不标已读）'],['K / ↑','高亮上一封'],['Enter','打开高亮的邮件'],['E','完成并归档（高亮或所选；关联待办一并完成），高亮移到下一封'],['Z','撤销最近一条操作，连按逐条撤销'],['[','收起 / 展开侧栏'],['S','星标切换'],['U','标为未读切换'],['X','勾选当前'],['R','回复（在正文下方内嵌，点「展开」可改收件人、加附件）'],['C','写新邮件'],['T','加入待办（可选截止日、优先级）'],['H','稍后提醒（今天 18:00 / 明天 9:00 / 下周一 / 自选）'],['Shift+E','完成并归档，并填写处理说明（结果、富文本、附件、关联邮件）'],['N','无需处理：同类邮件以后不标待处理、不提取待办'],['/ 或 ⌘K','命令面板'],['⌘↵','写信窗内发送'],['Esc','依次关闭：命令面板 → 收起写信区（不丢稿）→ 清空勾选'],['?','本帮助']]" :key="r[0]">
+          <tr><td><kbd x-text="r[0]"></kbd></td><td x-text="r[1]"></td></tr>
+        </template></tbody></table></div>
+    </div>
+  </div>
+
+
+  <!-- ==================== 完成说明 ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.noteDlg.open" @click.self="$store.v2.noteDlg.open = false" style="display:none">
+    <div class="v2-dialog" role="dialog" aria-label="完成说明" style="width:560px" data-testid="note-dlg" tabindex="-1" @keydown="$store.v2.noteKey($event)">
+      <div class="hd"><i class="ph ph-notepad"></i>
+        <span class="grow" x-text="$store.v2.noteDlg.edit ? '编辑处理记录' : ($store.v2.noteDlg.after ? '补充处理说明' : '完成并归档 · ' + $store.v2.noteDlg.ids.length + ' 封')"></span>
+        <button class="v2-iconbtn" @click="$store.v2.noteDlg.open = false" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd v2-tdlg">
+        <template x-if="!$store.v2.noteDlg.edit">
+          <div><label>快捷原因（点一下或按数字键直接完成）</label>
+            <div class="v2-qr" data-testid="note-qr"><template x-for="(r, i) in $store.v2.quickReasons" :key="r">
+              <button class="v2-chip" @click="$store.v2.useQuickReason(r)" :title="'结果：' + $store.v2._qrOutcome(r)"><kbd x-text="i + 1"></kbd><span x-text="r"></span></button></template></div></div>
+        </template>
+        <label>处理结果</label>
+        <div class="v2-seg" role="radiogroup" aria-label="处理结果"><template x-for="o in $store.v2.NOTE_OUTCOMES" :key="o">
+          <button :class="{ on: $store.v2.noteDlg.outcome === o }" @click="$store.v2.noteDlg.outcome = $store.v2.noteDlg.outcome === o ? '' : o" :data-outcome="o" x-text="o"></button></template></div>
+        <label>说明（复盘时看的：怎么处理的、结论、遗留问题）</label>
+        <div class="v2-netb">
+          <template x-for="b in [['bold','ph-text-b','加粗'],['italic','ph-text-italic','斜体'],['underline','ph-text-underline','下划线'],['insertUnorderedList','ph-list-bullets','列表'],['insertOrderedList','ph-list-numbers','编号'],['link','ph-link','链接'],['removeFormat','ph-text-t-slash','清除格式']]" :key="b[0]">
+            <button type="button" @mousedown.prevent="$store.v2.noteCmd(b[0])" :title="b[2]" :aria-label="b[2]"><i class="ph" :class="b[1]"></i></button></template></div>
+        <div class="v2-ned" contenteditable="true" role="textbox" aria-multiline="true" aria-label="说明" data-placeholder="可留空。⌘↵ 保存"></div>
+        <label>附件</label>
+        <div class="v2-natts">
+          <template x-for="a in $store.v2.noteDlg.atts" :key="a.name + a.size"><span class="v2-chip ghost"><i class="ph" :class="a.uploading ? 'ph-spinner v2-spin' : 'ph-paperclip'"></i>
+            <span x-text="a.name + ' · ' + $store.v2.fmtSize(a.size)"></span><button @click="$store.v2.noteRmAtt(a)" aria-label="移除附件"><i class="ph ph-x"></i></button></span></template>
+          <label class="v2-linkbtn" style="cursor:pointer"><i class="ph ph-plus"></i>添加附件（单个 ≤25MB）<input type="file" multiple hidden @change="$store.v2.noteAttach($event)" data-testid="note-file"></label></div>
+        <label>关联邮件</label>
+        <div class="v2-natts"><template x-for="l in $store.v2.noteDlg.links" :key="l.id"><span class="v2-chip ghost"><i class="ph ph-link-simple"></i><span x-text="l.subject"></span>
+          <button @click="$store.v2.noteDlg.links = $store.v2.noteDlg.links.filter(x => x.id !== l.id)" aria-label="移除关联"><i class="ph ph-x"></i></button></span></template></div>
+        <input class="input" data-nq x-model="$store.v2.noteDlg.q" @input="$store.v2.noteSearch()" placeholder="搜邮件：主题、发件人、关键词（回车选第一条）" data-testid="note-q">
+        <div class="v2-nres" x-show="$store.v2.noteDlg.results.length || $store.v2.noteDlg.searching">
+          <div class="muted" x-show="$store.v2.noteDlg.searching">搜索中…</div>
+          <template x-for="r in $store.v2.noteDlg.results" :key="r.id"><button class="v2-ctxmail" @click="$store.v2.noteAddLink(r)"><span class="w" x-text="r.sender"></span><span class="s" x-text="r.subject"></span><small x-text="$store.v2.fmtTime(r.time)"></small></button></template></div>
+      </div>
+      <div class="v2-chatin" style="justify-content:flex-end">
+        <small class="muted" style="flex:1" x-text="$store.v2.noteDlg.edit || $store.v2.noteDlg.after ? '⌘↵ 保存 · Esc 取消' : 'Enter 完成（可全部留空）· ⌘↵ 在编辑器里也可完成 · Esc 取消'"></small>
+        <button class="btn btn-ghost" @click="$store.v2.noteDlg.open = false">取消</button>
+        <button class="btn btn-primary" @click="$store.v2.confirmNote()" :disabled="$store.v2.noteDlg.busy" data-testid="note-ok"
+                x-text="$store.v2.noteDlg.edit || $store.v2.noteDlg.after ? '保存' : '完成并归档'"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 稍后提醒（H） ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.snzDlg.open" @click.self="$store.v2.snzDlg.open = false" style="display:none">
+    <div class="v2-dialog" role="dialog" aria-label="稍后提醒" style="width:380px" data-testid="snz-dlg">
+      <div class="hd"><i class="ph ph-alarm"></i><span class="grow" x-text="'稍后提醒 · ' + $store.v2.snzDlg.ids.length + ' 封'"></span>
+        <button class="v2-iconbtn" @click="$store.v2.snzDlg.open = false" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd v2-tdlg">
+        <small class="muted">到点前不出现在「今日分拣」，收件箱照常显示；到点后回到原分组最前，标「提醒」。</small>
+        <template x-for="o in $store.v2.snzOptions" :key="o[0]">
+          <button class="v2-snzopt" @click="$store.v2.snoozeAt(o[2], o[1])" :data-snz="o[0]"><span x-text="o[1]"></span><small x-text="o[2].toLocaleDateString('zh-CN', { weekday: 'short', month: 'numeric', day: 'numeric' })"></small></button></template>
+        <label>选时间</label>
+        <div style="display:flex;gap:8px"><input class="input" type="datetime-local" x-model="$store.v2.snzDlg.pick" data-testid="snz-pick" style="flex:1">
+          <button class="btn btn-primary" @click="$store.v2.snoozePick()" data-testid="snz-ok">确定</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 静音告警 ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.muteDlg.open" @click.self="$store.v2.muteDlg.open = false" style="display:none">
+    <div class="v2-dialog" role="dialog" aria-label="静音告警" style="width:440px" data-testid="mute-dlg" @keydown.enter.prevent="$store.v2.confirmMute()">
+      <div class="hd"><i class="ph ph-bell-slash"></i><span class="grow">静音 7 天</span>
+        <button class="v2-iconbtn" @click="$store.v2.muteDlg.open = false" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd">
+        <div class="v2-scopes">
+          <label class="v2-scope-opt" :class="{ on: $store.v2.muteDlg.scope === 'object' }"><input type="radio" name="mute-scope" value="object" x-model="$store.v2.muteDlg.scope">
+            <span class="t"><b>这一个告警</b><small x-text="$store.v2.muteDlg.label"></small></span></label>
+          <label class="v2-scope-opt" :class="{ on: $store.v2.muteDlg.scope === 'sender' }"><input type="radio" name="mute-scope" value="sender" x-model="$store.v2.muteDlg.scope">
+            <span class="t"><b>该发件人的全部告警</b><small x-text="$store.v2.muteDlg.sender"></small></span></label>
+        </div>
+        <p class="muted" style="margin:var(--space-3) 0 0">静音期间新来的同类告警也不出现在「今日分拣」（底部「已静音」里可看、可随时取消）；不影响同步、收件箱与邮件规则；跨账户生效。</p>
+      </div>
+      <div class="v2-chatin" style="justify-content:flex-end">
+        <button class="btn btn-ghost" @click="$store.v2.muteDlg.open = false">取消</button>
+        <button class="btn btn-primary" @click="$store.v2.confirmMute()" data-testid="mute-ok">静音 7 天</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 加入待办（P1-E） ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.todoDlg.open" @click.self="$store.v2.todoDlg.open = false" style="display:none">
+    <div class="v2-dialog" role="dialog" aria-label="加入待办" style="width:460px" data-testid="todo-dlg" @keydown.enter.prevent="$store.v2.confirmTodoDlg()">
+      <div class="hd"><i class="ph ph-check-square"></i><span class="grow">加入待办</span>
+        <button class="v2-iconbtn" @click="$store.v2.todoDlg.open = false" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd v2-tdlg">
+        <label>内容</label><input class="input txt" x-model="$store.v2.todoDlg.text" placeholder="要做什么">
+        <label>截止日</label>
+        <div class="v2-seg" role="radiogroup" aria-label="截止日">
+          <template x-if="$store.v2.todoDlg.aiDue"><button :class="{ on: $store.v2.todoDlg.mode === 'ai' }" @click="$store.v2.todoDlg.mode = 'ai'" data-due="ai" x-text="'AI 识别 ' + $store.v2.todoDlg.aiDue.slice(5).replace('-', '/')"></button></template>
+          <template x-for="o in [['today', '今天'], ['tomorrow', '明天'], ['pick', '选日期'], ['none', '不设']]" :key="o[0]">
+            <button :class="{ on: $store.v2.todoDlg.mode === o[0] }" @click="$store.v2.todoDlg.mode = o[0]" :data-due="o[0]" x-text="o[1]"></button></template></div>
+        <input class="input" type="date" x-show="$store.v2.todoDlg.mode === 'pick'" x-model="$store.v2.todoDlg.pick" data-testid="todo-pick">
+        <small class="muted" x-show="$store.v2.todoDlg.mode === 'ai' && $store.v2.todoDlg.aiSrc" x-text="'依据邮件原文「' + $store.v2.todoDlg.aiSrc + '」'"></small>
+        <label>优先级</label>
+        <div class="v2-seg"><template x-for="o in [['normal', '普通'], ['high', '高']]" :key="o[0]">
+          <button :class="{ on: $store.v2.todoDlg.pri === o[0] }" @click="$store.v2.todoDlg.pri = o[0]" :data-pri="o[0]" x-text="o[1]"></button></template></div>
+        <label class="v2-check" style="margin-top:var(--space-3)"><input type="checkbox" x-model="$store.v2.todoDlg.link">
+          <span x-text="'关联本邮件：' + ($store.v2.todoDlg.subject || '').slice(0, 30)"></span></label>
+      </div>
+      <div class="v2-chatin" style="justify-content:flex-end">
+        <small class="muted" style="flex:1">Enter 确认 · Esc 取消</small>
+        <button class="btn btn-ghost" @click="$store.v2.todoDlg.open = false">取消</button>
+        <button class="btn btn-primary" @click="$store.v2.confirmTodoDlg()" data-testid="todo-ok">加入</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 无需处理 ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.noAct.open" @click.self="$store.v2.noAct.open = false" style="display:none" data-testid="noact">
+    <div class="v2-dialog" role="dialog" aria-label="标记为无需处理" style="width:480px">
+      <div class="hd"><i class="ph ph-check-circle" style="color:var(--color-accent-300)"></i><span class="grow">停止从这类邮件提取待办？</span>
+        <button class="v2-iconbtn" @click="$store.v2.noAct.open = false" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+      <div class="bd">
+        <p class="muted" style="margin:0 0 var(--space-4)">命中的邮件打上「无需处理」标签：不再显示「待处理」，AI 不提取待办、不准备回复草稿。去掉标签即恢复。</p>
+        <div class="v2-scopes">
+          <template x-for="s in $store.v2.NOACT_SCOPES" :key="s[0]">
+            <label class="v2-scope-opt" :class="{ on: $store.v2.noAct.scope === s[0] }">
+              <input type="radio" name="noact-scope" :value="s[0]" :checked="$store.v2.noAct.scope === s[0]" @change="$store.v2.setNoActScope(s[0])">
+              <span class="t"><b x-text="s[1]"></b><small x-text="s[0] === 'same_kind' && $store.v2.noAct.preview ? ($store.v2.noAct.preview.sender + ' · 「' + $store.v2.noAct.preview.pattern + '」') : (s[0] === 'sender' && $store.v2.noAct.preview ? $store.v2.noAct.preview.sender : s[2])"></small></span>
+              <span class="n" x-show="$store.v2.noAct.scope === s[0]" x-text="$store.v2.noAct.loading ? '…' : ($store.v2.noAct.preview ? $store.v2.noAct.preview.matched + ' 封' : '')"></span>
+            </label>
+          </template>
+        </div>
+        <div class="k2" style="margin-top:var(--space-4)">之后这类邮件</div>
+        <div class="v2-seg" data-testid="noact-mode"><template x-for="m in [['keep','仍显示摘要，但不提取待办'],['skip','直接归入「其他」，不分析']]" :key="m[0]">
+          <button :class="{ on: $store.v2.noAct.mode === m[0] }" @click="$store.v2.noAct.mode = m[0]" :data-mode="m[0]" x-text="m[1]"></button></template></div>
+        <p class="v2-warn" style="margin:var(--space-3) 0 0" x-show="$store.v2.pendingActions" x-text="'本期仍有 ' + $store.v2.pendingActions + ' 项行动待确认，停止后不会再出现在这里。已加入的待办不受影响。'"></p>
+        <p class="muted" x-show="$store.v2.noAct.scope !== 'single'" style="margin:var(--space-3) 0 0">会在「设置 → 邮件规则」新增一条无需处理规则，以后同步进来的同类邮件自动套用；不影响该发件人的其他规则（如移动文件夹）。</p>
+        <template x-if="$store.v2.noAct.preview && $store.v2.noAct.preview.pending_todos">
+          <label class="v2-check" style="margin-top:var(--space-4);white-space:normal;align-items:flex-start">
+            <input type="checkbox" x-model="$store.v2.noAct.completeTodos" data-testid="noact-todos">
+            <span x-text="'这些邮件已有 ' + $store.v2.noAct.preview.pending_todos + ' 条未完成待办（如「' + ($store.v2.noAct.preview.todo_samples[0] || '') + '」），一并标为完成'"></span></label>
+        </template>
+      </div>
+      <div class="v2-chatin" style="justify-content:flex-end">
+        <button class="btn btn-ghost" @click="$store.v2.noAct.open = false">取消</button>
+        <button class="btn btn-primary" @click="$store.v2.applyNoAction()" :disabled="$store.v2.noAct.busy || $store.v2.noAct.loading" data-testid="noact-apply"
+                x-text="$store.v2.noAct.busy ? '处理中…' : ('标记' + ($store.v2.noAct.preview ? ' ' + $store.v2.noAct.preview.matched + ' 封' : ''))"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== 手机：底部导航 / 阅读页操作栏（<760px） ==================== -->
+  <nav class="v2-tabbar" x-show="$store.v2.phone && !($store.mail.currentEmail && $store.v2.isMailView)" style="display:none" data-testid="tabbar" aria-label="导航">
+    <template x-for="t in [['triage','分拣','list-checks'],['inbox','全部','tray'],['todos','待办','check-square']]" :key="t[0]">
+      <button :class="{ on: $store.v2.view === t[0] }" @click="$store.v2.go(t[0])" :data-tab="t[0]"><i :class="($store.v2.view === t[0] ? 'ph-fill ph-' : 'ph ph-') + t[2]"></i><span x-text="t[1]"></span>
+        <b x-show="$store.v2.viewCount(t[0])" x-text="$store.v2.viewCount(t[0])"></b></button></template>
+    <button @click="$store.v2.newCompose()" data-tab="compose"><i class="ph ph-pencil-simple-line"></i><span>写信</span></button>
+  </nav>
+  <nav class="v2-readact" x-show="$store.v2.phone && $store.mail.currentEmail && $store.v2.isMailView" style="display:none" data-testid="readact" aria-label="邮件操作">
+    <button @click="$store.v2.reply(false)"><i class="ph ph-arrow-bend-up-left"></i><span>回复</span></button>
+    <button @click="$store.v2.briefDone()" data-testid="ra-done"><i class="ph ph-check-circle"></i><span>完成</span></button>
+    <button @click="$store.v2.openSnooze([$store.mail.currentEmail.id])"><i class="ph ph-alarm"></i><span>稍后</span></button>
+    <button @click="$store.v2.phoneMore = !$store.v2.phoneMore" :class="{ on: $store.v2.phoneMore }" data-testid="ra-more"><i class="ph ph-dots-three"></i><span>更多</span></button>
+  </nav>
+
+  <!-- ==================== Toast / 新版本 ==================== -->
+  <div class="v2-mn" x-show="$store.v2.mn.open" style="display:none" :style="{ left: $store.v2.mn.x + 'px', top: $store.v2.mn.y + 'px' }" role="listbox" aria-label="提及联系人" data-testid="mention-pop" @mousedown.prevent>
+<template x-for="(p, i) in $store.v2.mn.list" :key="p.email"><div class="it" :class="{ on: i === $store.v2.mn.idx }" role="option" :aria-selected="i === $store.v2.mn.idx" @mousedown.prevent="$store.v2._mnPick(p)" @mouseenter="$store.v2.mn.idx = i" data-testid="mention-item"><span class="nm" x-text="$store.v2._mnName(p)"></span><span class="em" x-text="p.email"></span></div></template>
+</div>
+<div class="v2-toasts" aria-live="polite">
+    <template x-for="n in $store.ui.notifications" :key="n.id"><div class="v2-toast" :class="n.type" x-text="n.message"></div></template>
+    <template x-if="$store.v2.toast"><div class="v2-toast" :class="$store.v2.toast.type" data-testid="toast"><span x-text="$store.v2.toast.text"></span>
+      <button x-show="!!$store.v2.toast.undo" @click="$store.v2.undo()">撤销 <kbd>Z</kbd></button>
+      <button x-show="!!$store.v2.toast.extra" @click="const x = $store.v2.toast.extra; $store.v2.toast = null; x.run()" x-text="$store.v2.toast.extra && $store.v2.toast.extra.label" data-testid="toast-extra"></button>
+      <button class="more" x-show="$store.v2.ops.length > 1" @click="$store.v2.panel = 'ops'" x-text="'最近操作 ' + $store.v2.ops.length"></button></div></template>
+  </div>
+  <div class="v2-ops" x-show="$store.v2.panel === 'ops'" style="display:none" role="dialog" aria-label="最近操作" data-testid="ops">
+    <div class="hd"><i class="ph ph-clock-counter-clockwise"></i><span class="grow">最近操作</span><small class="muted">按 Z 撤销最上面一条</small>
+      <button class="v2-iconbtn" @click="$store.v2.panel = ''" aria-label="关闭"><i class="ph ph-x"></i></button></div>
+    <div class="none" x-show="!$store.v2.ops.length">本次打开后还没有可撤销的操作</div>
+    <template x-for="o in $store.v2.ops" :key="o.id">
+      <div class="op" :class="o.state"><span class="t" x-text="o.text"></span><small x-text="$store.v2.opState(o) || $store.v2.opAge(o)"></small>
+        <button x-show="o.state === 'done'" @click="$store.v2.undoOp(o)">撤销</button></div>
+    </template>
+  </div>
+  <!-- ==================== 变化（与往期对比）弹窗：本期 = 正在读的这封，只选对比基准 ==================== -->
+  <div class="v2-overlay" x-show="$store.v2.chg.dlg" @click.self="$store.v2.chg.dlg = false" style="display:none">
+    <div class="v2-dialog v2-chgdlg" role="dialog" aria-label="变化" data-testid="chg">
+      <div class="hd">
+        <i class="ph ph-git-diff"></i><b>变化</b><span class="muted">本期与</span>
+        <div class="v2-chgdd" @click.outside="$store.v2.chg.menu = false">
+          <button class="v2-sbtn" @click="$store.v2.chgMenu()" :aria-expanded="$store.v2.chg.menu" aria-haspopup="listbox" data-testid="chg-base">
+            <span x-text="$store.v2.chgBaseName"></span><i class="ph ph-caret-down"></i></button>
+          <div class="v2-chgmenu" x-show="$store.v2.chg.menu" style="display:none" role="listbox" aria-label="对比基准" data-testid="chg-menu">
+            <template x-for="x in $store.v2.chgBases" :key="'cb' + x.id">
+              <button role="option" :aria-selected="x.id === $store.v2.chg.base" :class="{ on: x.id === $store.v2.chg.base }" @click="$store.v2.chgPick(x)" data-testid="chg-opt" :data-id="x.id">
+                <span class="d" x-text="$store.v2.seriesDateY(x)"></span><span class="r" x-text="$store.v2.chgRel(x)"></span>
+                <span class="h" x-text="x.headline || x.subject"></span><span class="c" x-show="x.cmp" data-testid="chg-cached">已对比</span></button></template></div></div>
+        <span class="muted">相比</span><span class="grow"></span>
+        <small class="when" x-show="$store.v2.chg.data && $store.v2.chg.data.created_at" x-text="$store.v2.chg.data ? new Date($store.v2.chg.data.created_at * 1000).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) + ' ' + new Date($store.v2.chg.data.created_at * 1000).toTimeString().slice(0, 5) + ' 对比' : ''"></small>
+        <button class="v2-linkbtn" x-show="$store.v2.chg.data" :disabled="$store.v2.chg.loading" @click="$store.v2.chgRefresh()" data-testid="chg-refresh">重新对比</button>
+        <button class="v2-iconbtn" @click="$store.v2.chg.dlg = false" aria-label="关闭"><i class="ph ph-x"></i></button>
+      </div>
+      <div class="bd">
+        <template x-if="$store.v2.chg.loading && !$store.v2.chg.data"><div data-testid="chg-loading"><div class="v2-bskel"><span></span><span></span></div>
+          <p class="muted" x-text="'正在逐条比对' + ($store.v2.chgBase ? ' ' + $store.v2.seriesDateY($store.v2.chgBase) + ' ' : '') + '与本期正文…（约 15 秒，结果会缓存）'"></p></div></template>
+        <template x-if="!$store.v2.chg.loading && $store.v2.chg.error"><div class="err" data-testid="chg-error"><span x-text="$store.v2.chg.error"></span>
+          <button class="v2-sbtn" @click="$store.v2.chgRefresh()"><i class="ph ph-arrow-clockwise"></i>重试</button></div></template>
+        <template x-if="$store.v2.chg.data">
+          <div :class="{ dim: $store.v2.chg.loading }">
+            <div class="sum" x-text="$store.v2.chgSummary" data-testid="chg-sum"></div>
+            <div class="v2-cmp" data-testid="chg-full">
+              <div class="k" x-text="$store.v2.chgWord + '行动跟进'"></div>
+              <div class="none" x-show="!$store.v2.chg.data.followups.length" x-text="$store.v2.chgWord + '没有可跟进的行动。'"></div>
+              <template x-for="(f, i) in $store.v2.chg.data.followups" :key="'f' + i">
+                <details class="v2-cmpi" data-testid="cmp-fu"><summary><span class="tag" :class="'cs-' + $store.v2.CMP_STATUS[f.status][1]" x-text="$store.v2.CMP_STATUS[f.status][0]"></span>
+                  <span class="t" x-text="f.text"></span><small x-text="f.progress || f.source"></small></summary>
+                  <div class="q" x-show="f.quote"><b>本期原文：</b><span x-text="f.quote"></span></div>
+                  <div class="q" x-show="f.prev_quote"><b x-text="$store.v2.chgWord + '原文：'"></b><span x-text="f.prev_quote"></span></div>
+                  <div class="q" x-show="!f.quote && !f.prev_quote" x-text="'出处：' + f.source"></div></details>
+              </template>
+              <div class="k">本期新增</div>
+              <div class="none" x-show="!$store.v2.chg.data.new.length">没有新增议题。</div>
+              <template x-for="(x, i) in $store.v2.chg.data.new" :key="'n' + i">
+                <details class="v2-cmpi" data-testid="cmp-new"><summary><span class="tag cs-new">新增</span><span class="t" x-text="x.text"></span></summary>
+                  <div class="q"><b>本期原文：</b><span x-text="x.quote"></span></div></details>
+              </template>
+              <div class="k">延续议题</div>
+              <div class="none" x-show="!$store.v2.chg.data.continued.length">没有延续的议题。</div>
+              <template x-for="(x, i) in $store.v2.chg.data.continued" :key="'c' + i">
+                <details class="v2-cmpi" data-testid="cmp-cont"><summary><span class="tag cs-cont">延续</span><span class="t" x-text="x.text"></span></summary>
+                  <div class="q"><b>本期：</b><span x-text="x.quote"></span></div><div class="q"><b x-text="$store.v2.chgWord + '：'"></b><span x-text="x.prev_quote"></span></div></details>
+              </template>
+              <p class="muted note">每条结论都能在两期正文或你的待办里找到出处；纪要没写明的进展显示「状态未知」，不推断为完成。<span x-show="$store.v2.chg.data.dropped" x-text="'（' + $store.v2.chg.data.dropped + ' 条 AI 给不出原文出处，已丢弃）'"></span></p>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div class="v2-chatin" style="justify-content:space-between">
+        <button class="v2-sbtn ghost" x-show="$store.v2.chgBase" @click="$store.v2.chgOpenBase()" data-testid="chg-openbase"><i class="ph ph-arrow-square-out"></i><span x-text="'打开' + $store.v2.chgWord + '邮件'"></span></button>
+        <button class="btn btn-ghost" @click="$store.v2.chg.dlg = false">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 登录失效提示：任何同源请求返回 401 即出现；不自动刷新，免得写了一半的内容丢失 -->
+  <div class="v2-authlost" x-show="$store.v2.authLost" style="display:none" role="alert" data-testid="auth-lost">
+    <i class="ph ph-lock-key" aria-hidden="true"></i>
+    <span>登录已失效（访问令牌已更换或过期），现在的操作不会保存到服务器。写了一半的内容请先别关页面。</span>
+    <button @click="$store.v2.relogin()" data-testid="auth-relogin">在新标签页登录</button>
+    <button @click="$store.v2.recheckAuth(true)" data-testid="auth-recheck">已登录，重试</button>
+    <button class="sec" @click="$store.ui.reloadForNewVersion()" data-testid="auth-reload">刷新本页</button>
+  </div>
+  <div class="v2-newver" x-show="$store.ui.newVersion" style="display:none">已有新版本 <span x-text="$store.ui.newVersion"></span><button @click="$store.ui.reloadForNewVersion()">刷新</button></div>
+</div>
+</body>
+</html>

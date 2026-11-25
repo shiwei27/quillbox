@@ -1,0 +1,29 @@
+# Full dependency set for a deployment (all extras). Source of truth for versions: pyproject.toml.
+# Requires Python >= 3.10.
+#   minimal install instead:  pip install -e .
+#   pick extras:              pip install -e ".[vector,ews,attachments]"
+
+# base
+fastapi>=0.104
+uvicorn>=0.24
+pyyaml>=6.0
+requests>=2.31
+ruamel.yaml>=0.17
+keyring>=24
+
+# [vector] semantic search
+chromadb>=0.4.24
+sentence-transformers>=2.7
+torch>=2.0
+transformers>=4.40
+
+# [ews] Exchange accounts
+exchangelib>=5.0
+
+# [attachments] attachment text extraction
+openpyxl>=3.1
+pypdf>=3.0
+python-docx>=0.8.11
+
+# [windows] Outlook COM backend + DPAPI credentials
+pywin32>=306; sys_platform == "win32"

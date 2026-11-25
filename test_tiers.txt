@@ -1,0 +1,47 @@
+# Test tiers for run_tests.py: "<tier> <file>  # note". Every test_* file must be listed.
+# unit        offline; runs in CI on Linux/macOS/Windows
+# vector      offline but needs the [vector] extra (chromadb)
+# windows     Windows-only (Outlook COM / wmic / DPAPI)
+
+
+unit         test_ai_failure_visible.py
+unit         test_attachment_text.py
+unit         test_auth_gate.py
+unit         test_clean_body.py
+unit         test_config_safety.py
+unit         test_credential_backends.py
+unit         test_draft_imap_push.py
+unit         test_drafts.py
+unit         test_ews_extractor.py
+unit         test_folder_select.js
+unit         test_fts_cjk.py
+unit         test_imap_header_object.py
+unit         test_imap_offline.py
+unit         test_insight.py
+unit         test_insight_mode.py
+unit         test_insight_v2.py
+unit         test_insight_value.py
+unit         test_kbnav.js
+unit         test_list_resize.js
+unit         test_mailbox_labels_core.py
+unit         test_mcp_redlines.py
+unit         test_message_id.py
+unit         test_no_action.py
+unit         test_pre_insight.py
+unit         test_recipients.js
+unit         test_rule_local_semantics.py
+unit         test_rule_match.py
+unit         test_rules_server_move.py
+unit         test_selfheal_vectors.py
+unit         test_server_import.py
+unit         test_smtp_sender.py
+unit         test_sse_done.js
+unit         test_todo_extract.py
+unit         test_todo_failure_visible.py
+unit         test_vector_batch.py
+unit         test_watchdog_stuck.py
+
+vector       test_vector_store_safety.py  # needs chromadb ([vector] extra)
+
+windows      test_outlook.py  # Outlook COM
+windows      test_watchdog_procmatch.py  # watchdog probes processes with wmic; fixtures are Windows command lines

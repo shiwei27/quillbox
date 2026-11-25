@@ -1,0 +1,41 @@
+# Local data: mail store, vector index, credentials, auth token — never commit
+data/
+models/
+*.db
+*.sqlite
+*.sqlite3
+**/chromadb/
+
+# Personal configuration — copy config.example.yaml to config.yaml
+config.yaml
+
+# Logs and runtime output
+*.log
+*.log.*
+*.err
+*.out
+*.pid
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Backups and temp files
+*.bak
+*.bak*
+*.tmp
+_tmp_*
+
+# Export tool marker
+.quillbox-export

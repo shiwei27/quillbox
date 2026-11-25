@@ -1,0 +1,18 @@
+Quillbox
+Copyright 2026 The Quillbox Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product bundles the following third-party components, each under its own license.
+Full license texts are in third_party/ (copied verbatim from the upstream repositories).
+
+  Component                        License  Bundled files                                   License text
+  Alpine.js 3.14.3 + @alpinejs/persist  MIT  frontend/js/vendor/alpinejs.min.js,             third_party/alpinejs.LICENSE
+                                           frontend/js/vendor/alpine-persist.min.js
+  Lucide 0.460.0                   ISC      frontend/js/vendor/lucide.min.js                third_party/lucide.LICENSE
+  Tailwind CSS Play CDN 3.4.17     MIT      frontend/js/vendor/tailwind-play-3.4.17.js      third_party/tailwindcss.LICENSE
+  Inter 4.1 (typeface)             OFL-1.1  frontend/vendor/inter/                          third_party/inter.LICENSE
+  Phosphor Icons (web font)        MIT      frontend/vendor/phosphor/                       third_party/phosphor.LICENSE
+
+The embedding model (default: m3e-base) is NOT bundled; it is downloaded by the user
+and remains under its own license.

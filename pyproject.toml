@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quillbox"
+version = "0.1.0.dev0"
+description = "Local-first AI mail workspace: local mail store, local vector index, LLM of your choice, web UI and MCP server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "fastapi>=0.104",
+    "uvicorn>=0.24",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "ruamel.yaml>=0.17",
+    "keyring>=24",          # mail credentials in the OS keychain (non-Windows default backend)
+]
+
+[project.optional-dependencies]
+vector = [                  # semantic search; without it the server falls back to keyword search
+    "chromadb>=0.4.24",
+    "sentence-transformers>=2.7",
+    "torch>=2.0",
+    "transformers>=4.40",
+]
+ews = ["exchangelib>=5.0"]  # Exchange (EWS) accounts
+attachments = [             # read xlsx / pdf / docx attachment text
+    "openpyxl>=3.1",
+    "pypdf>=3.0",
+    "python-docx>=0.8.11",
+]
+windows = ["pywin32>=306; sys_platform == 'win32'"]  # Outlook COM backend, DPAPI credential backend
+test = ["httpx>=0.27", "jsonschema>=4"]  # unit tests: python run_tests.py
+all = ["quillbox[vector,ews,attachments,windows]"]
+
+# Flat layout for now (src/ layout is Phase 3). Install editable so frontend/ and static/ stay next to server.py:
+#   pip install -e ".[all]"
+[tool.setuptools]
+py-modules = ["server", "daemon", "mcp_server", "watchdog"]
+packages = ["core"]
