@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 
 const SRC = path.join(__dirname, 'frontend', 'js', 'utils', 'sse.js');
-const src = fs.readFileSync(SRC, 'utf8');
+const src = fs.readFileSync(SRC, 'utf8').replace(/\r\n/g, '\n');   // Windows 检出可能是 CRLF
 
 const START = 'export function createSSE(';
 const END = '/**\n * 使用 fetch 创建 POST SSE 流';

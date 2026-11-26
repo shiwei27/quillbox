@@ -698,7 +698,10 @@ def push_draft_to_imap(ext: "ImapExtractor", password: str, *, subject: str,
         msg["Cc"] = cc_addr
     msg["Subject"] = subject or ""
     msg["Date"] = formatdate(localtime=True)
-    msg["Message-ID"] = make_msgid()
+    # 域名取账户地址的域，不用 make_msgid() 缺省的本机 FQDN：反查主机名在有的机器上要等很久，
+    # 也会把本机主机名写进草稿头（与 smtp_sender 同一口径）。
+    _dom = (ext.username or ext.account or "").rsplit("@", 1)[-1].strip() if "@" in (ext.username or ext.account or "") else ""
+    msg["Message-ID"] = make_msgid(domain=_dom) if _dom else make_msgid()
     # 打个标记，便于人在服务端一眼认出来源；同步侧本就跳过草稿箱，不依赖它去重。
     msg["X-Quillbox-Draft"] = "1"
     if is_html:

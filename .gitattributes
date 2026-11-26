@@ -1,0 +1,6 @@
+# Keep LF in the repository and in checkouts on every OS (tests compare source text).
+* text=auto eol=lf
+*.bat text eol=crlf
+*.woff2 binary
+*.png binary
+*.ico binary

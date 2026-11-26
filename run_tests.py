@@ -61,6 +61,11 @@ def run_one(name, timeout):
 
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")   # Windows consoles default to cp1252
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("tests", nargs="*")
     ap.add_argument("--tier", default="unit", choices=TIERS)
