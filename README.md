@@ -8,7 +8,7 @@ generation. Ships a web UI and an MCP server.
 本地优先的 AI 邮件工作台：把邮箱同步到本机 SQLite（可选本地向量库），用你自选的大模型（默认本地 Ollama，
 也可接任何 OpenAI 兼容接口）做摘要、待办提取、会话洞察、回复起草与规则生成；提供 Web 界面与 MCP server。
 
-> Status: pre-release (v0.1 in preparation). Interfaces and setup steps will change.
+> Status: early release (v0.1). Interfaces and setup steps may still change; see [SECURITY.md](SECURITY.md) to report vulnerabilities.
 
 ## Requirements
 
