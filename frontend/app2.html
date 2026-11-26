@@ -630,7 +630,7 @@
           <p class="muted">条件命中后执行动作，按顺序匹配、首个命中生效。「移到文件夹」默认只改 Quillbox 内的归类。</p>
           <div class="v2-aibar card">
             <div class="k"><i class="ph ph-sparkle"></i>用一句话描述规则，让 AI 生成</div>
-            <div class="v2-row2"><input class="input" x-model="$store.settings.genText" @keydown.enter="$store.settings.generateRuleFromText()" placeholder="如：发件人含 noc@ 且与告警相关的邮件移到云告警并标已读">
+            <div class="v2-row2"><input class="input" x-model="$store.settings.genText" @keydown.enter="$store.settings.generateRuleFromText()" placeholder="如：发件人含 noc@ 且与告警相关的邮件移到告警通知并标已读">
               <button class="btn btn-primary" @click="$store.settings.generateRuleFromText()" :disabled="$store.settings.genLoading" x-text="$store.settings.genLoading ? '生成中…' : '生成'"></button></div>
             <div class="v2-row2" x-show="$store.settings.rulesUI.length">
               <select class="input" x-model.number="$store.settings.evalTarget" style="max-width:260px"><template x-for="(r, i) in $store.settings.rulesUI" :key="i"><option :value="i" x-text="r.name || ('规则 ' + (i + 1))"></option></template></select>

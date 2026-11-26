@@ -15,11 +15,11 @@ class FakeDB:
     def __init__(self, tagged=(), analyzed=()): self.tagged, self.analyzed = set(tagged), set(analyzed)
     def has_tag(self, i, t): return i in self.tagged
     def get_insight(self, i): return {"priority": "act"} if i in self.analyzed else None
-P = {"skip_accounts": ["noc@example.org"], "skip_folders": ["IAAS告警"], "skip_sender_patterns": ["no-reply@"]}
+P = {"skip_accounts": ["noc@example.org"], "skip_folders": ["系统告警"], "skip_sender_patterns": ["no-reply@"]}
 def mk(i, **kw):
     e = {"id": i, "unread": True, "folder": "收件箱", "account": "me@x.com", "sender_email": "a@b.com", "received_timestamp": 100}
     e.update(kw); return e
-mails = [mk("ok1", received_timestamp=300), mk("ok2", received_timestamp=200), mk("read", unread=False), mk("other", folder="云告警"),
+mails = [mk("ok1", received_timestamp=300), mk("ok2", received_timestamp=200), mk("read", unread=False), mk("other", folder="告警通知"),
          mk("noc", account="noc@example.org"), mk("bot", sender_email="no-reply@x.com"), mk("tagged"), mk("done")]
 D.load_config = lambda: {"ai": {}}
 got = D._pre_insight_candidates(mails, FakeDB(tagged={"tagged"}, analyzed={"done"}), P)

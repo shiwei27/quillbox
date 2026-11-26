@@ -209,7 +209,7 @@ class TestWatermark(unittest.TestCase):
 class TestFolderFilter(unittest.TestCase):
     def test_skips_system_and_non_mail(self):
         e = mk()
-        kids = [Folder("收件箱", 5), Folder("采购", 3),
+        kids = [Folder("收件箱", 5), Folder("项目", 3),
                 Folder("{06967759-274D}", 6),          # 隐藏系统文件夹
                 Folder("Recipient Cache", 44),          # 收件人缓存
                 Folder("日历", 4, cc="IPF.Appointment"),  # 非邮件容器
@@ -217,11 +217,11 @@ class TestFolderFilter(unittest.TestCase):
                 Folder("已删除邮件", 72),                 # 默认跳过项
                 Folder("空文件夹", 0)]                    # 没邮件
         names = [f.name for f in e._folders(Acct(kids))]
-        self.assertEqual(names, ["收件箱", "采购"])
+        self.assertEqual(names, ["收件箱", "项目"])
 
     def test_respects_config_skip(self):
-        e = mk(skip_folders=["采购"])
-        names = [f.name for f in e._folders(Acct([Folder("收件箱"), Folder("采购")]))]
+        e = mk(skip_folders=["项目"])
+        names = [f.name for f in e._folders(Acct([Folder("收件箱"), Folder("项目")]))]
         self.assertEqual(names, ["收件箱"])
 
     def test_inbox_label_normalized(self):
@@ -233,9 +233,9 @@ class TestFolderFilter(unittest.TestCase):
 
     def test_other_folder_keeps_server_name(self):
         e = mk()
-        f = Folder("割接通知", 3, fid="F2")
+        f = Folder("变更通知", 3, fid="F2")
         inbox = Folder("Inbox", 1, fid="F1")
-        self.assertEqual(e._folder_label(Acct([f], inbox=inbox), f), "割接通知")
+        self.assertEqual(e._folder_label(Acct([f], inbox=inbox), f), "变更通知")
 
 
 class TestConfig(unittest.TestCase):

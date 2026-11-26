@@ -26,14 +26,14 @@ check('是函数而非 getter', typeof store.allFolderNames === 'function',
       typeof store.allFolderNames);
 
 store.accounts = [
-  { name: 'a', folders: ['收件箱', '云告警', '已删除邮件'] },
-  { name: 'b', folders: ['云告警', '存档'] },
+  { name: 'a', folders: ['收件箱', '告警通知', '已删除邮件'] },
+  { name: 'b', folders: ['告警通知', '存档'] },
 ];
 store.globalFolders = ['全局夹', '', null];
 const names = store.allFolderNames();
 check('跨账户去重 + 过滤空值',
       JSON.stringify(names) ===
-      JSON.stringify(['收件箱', '云告警', '已删除邮件', '存档', '全局夹']),
+      JSON.stringify(['收件箱', '告警通知', '已删除邮件', '存档', '全局夹']),
       JSON.stringify(names));
 check('无重复项', new Set(names).size === names.length);
 check('无空串（x-for 的 :key 不能重复/为空）',

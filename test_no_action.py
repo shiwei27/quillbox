@@ -23,8 +23,8 @@ check("数字个数不同仍同类", P("您有3块云盘") == P("您有12块云�
 
 print("=== 2. 规则判定：no_action 独立于首个命中链 ===")
 rules = [
-    {"name": "示例云告警转移", "enabled": True, "match_mode": "all", "conditions": [{"field": "from", "op": "contains", "value": "@notice.examplecloud.example"}],
-     "actions": {"folder": "云告警"}},
+    {"name": "示例告警通知转移", "enabled": True, "match_mode": "all", "conditions": [{"field": "from", "op": "contains", "value": "@notice.examplecloud.example"}],
+     "actions": {"folder": "告警通知"}},
     {"name": "无需处理 · 示例云 · 续费", "enabled": True, "match_mode": "all",
      "conditions": [{"field": "from", "op": "is", "value": "system@notice.examplecloud.example"}, {"field": "subject", "op": "pattern_is", "value": P("示例云ECS续费成功提醒")}],
      "actions": {"no_action": True}},
@@ -34,7 +34,7 @@ eng = AIEngine(provider="api", prompts={"rules": rules})
 e_renew = {"sender": "示例云", "sender_email": "system@notice.examplecloud.example", "subject": "示例云ECS续费成功提醒"}
 e_quota = {"sender": "示例云", "sender_email": "system@notice.examplecloud.example", "subject": "【示例云配额中心】配额告警"}
 check("续费：命中无需处理", (eng.match_no_action(e_renew) or {}).get("name"), "无需处理 · 示例云 · 续费")
-check("续费：移动规则仍然命中（不被挡）", (eng._match_rule(e_renew) or {}).get("name"), "示例云告警转移")
+check("续费：移动规则仍然命中（不被挡）", (eng._match_rule(e_renew) or {}).get("name"), "示例告警通知转移")
 check("配额告警：不命中无需处理", eng.match_no_action(e_quota), None)
 check("停用规则不生效", eng.match_no_action({"sender_email": "x@y.z", "subject": "s"}), None)
 check("no_action 规则不进入首个命中链", (AIEngine(provider="api", prompts={"rules": rules[1:2]})._match_rule(e_renew)), None)

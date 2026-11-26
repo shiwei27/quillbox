@@ -146,11 +146,11 @@ class TestRulesEngineStillWorks(unittest.TestCase):
             "name": "开着的", "enabled": True, "match_mode": "all",
             "conditions": [{"field": "from", "op": "is",
                             "value": "system@notice.examplecloud.example"}],
-            "actions": {"folder": "云告警", "mark_read": True}}]}
+            "actions": {"folder": "告警通知", "mark_read": True}}]}
         got = eng._match_rule({"sender_email": "system@notice.examplecloud.example",
                                "subject": "告警", "body": ""})
         self.assertIsNotNone(got)
-        self.assertEqual((got.get("actions") or {}).get("folder"), "云告警")
+        self.assertEqual((got.get("actions") or {}).get("folder"), "告警通知")
 
     def test_first_match_wins(self):
         """按顺序匹配、首个命中生效 —— 界面上就是这么写的。"""

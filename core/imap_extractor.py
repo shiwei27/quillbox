@@ -74,7 +74,7 @@ _LIST_HEAD_RE = re.compile(r'\((?P<flags>[^)]*)\)\s+"(?P<delim>[^"]*)"\s*(?P<res
 # --------------------------------------------------------------------------- #
 
 def mutf7_decode(value: str) -> str:
-    """modified UTF-7 → str。中文文件夹名形如 ``&kceNLQ-``。"""
+    """modified UTF-7 → str。中文文件夹名形如 ``&mHl27g-``（项目）。"""
     out: List[str] = []
     i = 0
     while i < len(value):

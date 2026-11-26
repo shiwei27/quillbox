@@ -52,8 +52,8 @@ class FakeAI:
         return self._rule
 
 
-RULE = {"name": "示例云告警转移", "enabled": True,
-        "actions": {"folder": "云告警", "mark_read": True}}
+RULE = {"name": "示例告警通知转移", "enabled": True,
+        "actions": {"folder": "告警通知", "mark_read": True}}
 
 
 def mails(n=2):
@@ -69,7 +69,7 @@ class TestSwitchOff(unittest.TestCase):
         import daemon
         db = FakeDB()
         daemon._apply_rules(mails(2), FakeAI(RULE), db, {"rules": {}})
-        self.assertEqual([f for _, f in db.moved], ["云告警", "云告警"])
+        self.assertEqual([f for _, f in db.moved], ["告警通知", "告警通知"])
 
     def test_server_module_never_called(self):
         import daemon

@@ -85,7 +85,7 @@ def main() -> int:
             check("跳过名单含已删除/草稿", {"已删除邮件", "草稿"} <= ext.skip_folders)
 
         print("=== 2. modified UTF-7 与显示名 ===")
-        check("解码 &kceNLQ- = 采购", mutf7_decode("&kceNLQ-") == "采购")
+        check("解码 &mHl27g- = 项目", mutf7_decode("&mHl27g-") == "项目")
         check("解码 &g0l6Pw- 非空且无 &", "&" not in mutf7_decode("&g0l6Pw-"))
         for name in ("项目组", "读书小组", "已发送邮件", "IP", "a&b"):
             check("往返一致：%s" % name, mutf7_decode(mutf7_encode(name)) == name,
@@ -93,7 +93,7 @@ def main() -> int:
         check("Inbox 映射为收件箱", ImapExtractor.folder_display_name("Inbox") == INBOX_NAME)
         check("inbox 大小写不敏感", ImapExtractor.folder_display_name("INBOX") == INBOX_NAME)
         check("其余文件夹保留服务端原名",
-              ImapExtractor.folder_display_name("&kceNLQ-") == "采购")
+              ImapExtractor.folder_display_name("&mHl27g-") == "项目")
 
         print("=== 3. LIST 响应解析 ===")
         e = ImapExtractor(host="h", username="u", account=account,
